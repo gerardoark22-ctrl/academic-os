@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#e94560">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/static/icons/icon-192.svg">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.svg">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <title>Academic OS</title>
+</head>
+<body>
+  <div id="app">
+    <header class="top">
+      <h1 id="hdr-title">Academic OS</h1>
+      <div class="sub" id="hdr-sub">Cargando…</div>
+    </header>
+    <main class="content" id="main"></main>
+    <nav class="bottom">
+      <button data-view="dashboard" class="active"><span class="ico">🏠</span>Inicio</button>
+      <button data-view="tareas"><span class="ico">📋</span>Tareas</button>
+      <button data-view="cursos"><span class="ico">📚</span>Cursos</button>
+      <button data-view="tb"><span class="ico">⏰</span>Bloques</button>
+      <button data-view="riesgo"><span class="ico">🚨</span>Riesgo</button>
+      <button data-view="config"><span class="ico">⚙️</span>Más</button>
+    </nav>
+  </div>
+  <div class="modal-bg" id="modal">
+    <div class="modal" id="modal-body" onclick="event.stopPropagation()"></div>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

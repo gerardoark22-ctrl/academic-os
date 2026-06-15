@@ -1,0 +1,20 @@
+# Render.com — despliegue en la nube (gratis)
+# https://render.com
+
+services:
+  - type: web
+    name: academic-os
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: ACADEMIC_OS_DATA
+        value: /var/data
+      - key: ACADEMIC_OS_CLOUD
+        value: "1"
+      - key: DEEPSEEK_API_KEY
+        sync: false
+    disk:
+      name: academic-data
+      mountPath: /var/data
+      sizeGB: 1
