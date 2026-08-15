@@ -67,4 +67,7 @@ exports.handler = async () => {
   }
 };
 
-const ok = (body) => ({ statusCode: 200, body });
+const ok = (body) => {
+  console.log('despachar:', body);
+  return { statusCode: 200, body };
+};
