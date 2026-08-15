@@ -8,29 +8,30 @@ import {
   createNotification,
 } from '../utils/notifications';
 import { godAnger } from '../utils/gamification';
-import { browserNotificationsAllowed } from '../utils/notificationPolicy';
-import { ensurePushSubscription, pushDaySnapshot } from '../utils/pushClient';
+import { App } from '@capacitor/app';
+import { LocalNotifications } from '@capacitor/local-notifications';
+import { useTimeStore } from '../stores/timeStore';
+import {
+  ensureNotifPermission,
+  isNative,
+  rescheduleAll,
+} from '../utils/localNotifications';
 import { runPenaltyCycle } from '../utils/penaltyCycle';
 
 const CHECK_INTERVAL_MS = 5 * 60_000;
 const STARTUP_DELAY_MS = 2500;
 
 /**
- * Avisos in-app + Web Push.
+ * Avisos in-app + notificaciones LOCALES de Android.
  *
- * Los avisos con la app CERRADA los manda el backend (scheduler in-process);
- * acá solo se registra la suscripción y se le empuja el snapshot del día para
- * que pueda redactarlos.
+ * Con la app cerrada avisa Android, no un servidor: las alarmas se reprograman
+ * con datos frescos de Dexie cada vez que la app pasa a primer plano.
  */
 export function useNotifications(): void {
   useEffect(() => {
-    if (browserNotificationsAllowed()) {
-      void ensurePushSubscription();
-    }
-
     const runFullChecks = async () => {
       await runPenaltyCycle();
-      void pushDaySnapshot();
+      void rescheduleAll();
 
       const player = usePlayerStore.getState().player;
       if (!player) return;
@@ -76,9 +77,9 @@ export function useNotifications(): void {
     };
 
     const onVisible = () => {
-      // Al ocultarse conviene mandar el snapshot: es justo el momento en que
-      // el servidor pasa a ser el único que puede avisar.
-      void pushDaySnapshot();
+      // Al ocultarse conviene reprogramar: es justo el momento en que Android
+      // pasa a ser el único que puede avisar.
+      void rescheduleAll();
       if (document.visibilityState === 'visible') void runFullChecks();
     };
     const onOnline = () => void runFullChecks();
@@ -88,11 +89,30 @@ export function useNotifications(): void {
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('online', onOnline);
 
+    // Android: permiso + reprogramación al volver a primer plano, y el [Sí] de
+    // la notificación de fin de bloque marca el bloque como completado.
+    const nativo = isNative
+      ? Promise.all([
+          ensureNotifPermission().then(() => rescheduleAll()),
+          App.addListener('appStateChange', ({ isActive }) => {
+            void rescheduleAll();
+            if (isActive) void runFullChecks();
+          }),
+          LocalNotifications.addListener('localNotificationActionPerformed', (e) => {
+            const blockId = e.notification.extra?.blockId as string | undefined;
+            if (blockId && e.actionId === 'done') {
+              void useTimeStore.getState().completeBlock(blockId).then(() => rescheduleAll());
+            }
+          }),
+        ])
+      : null;
+
     return () => {
       window.clearTimeout(startup);
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', onOnline);
+      void nativo?.then(([, ...handles]) => handles.forEach((h) => void h.remove()));
     };
   }, []);
 }

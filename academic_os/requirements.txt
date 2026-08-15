@@ -7,10 +7,6 @@ uvicorn[standard]>=0.27.0
 pydantic>=2.0.0
 openai>=1.0.0
 fpdf2>=2.7.0
-# Notificaciones push a Android con la app cerrada (VAPID). Arrastra py-vapid
-# y cryptography, que es lo que genera el par de claves.
-pywebpush>=2.0.0
-
 # ── Solo app de escritorio (no hacen falta para usar la app en el celular) ──
 customtkinter>=5.2.0
 plyer>=2.1.0

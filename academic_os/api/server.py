@@ -26,7 +26,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import database as db  # noqa: E402
 from ai.openai_client import AcademicAI  # noqa: E402
-from api import push  # noqa: E402
 
 
 def _odyssey_dir() -> Path:
@@ -114,9 +113,7 @@ def create_app() -> FastAPI:
         token = os.environ.get("ACADEMICOS_TOKEN", "")
         ruta = request.url.path
         rutas_publicas = {"/api/health", "/api/auth/solicitar-codigo", "/api/auth/verificar-codigo"}
-        # /api/push/* queda fuera del token: el service worker no tiene dónde
-        # guardarlo, y lo único que exponen es "suscribir este navegador".
-        if token and ruta.startswith("/api/") and ruta not in rutas_publicas and not ruta.startswith("/api/push/"):
+        if token and ruta.startswith("/api/") and ruta not in rutas_publicas:
             enviado = request.headers.get("X-Token") or request.query_params.get("t", "")
             if enviado != token:
                 return JSONResponse({"detail": "Token inválido"}, status_code=401)
@@ -127,18 +124,10 @@ def create_app() -> FastAPI:
         # Falta un campo obligatorio: es culpa del pedido, no del servidor.
         return JSONResponse({"detail": str(exc)}, status_code=400)
 
-    app.include_router(push.router)
-
     @app.on_event("startup")
     def startup():
         db.init_db()
         db.auto_purga_completadas_diaria()
-
-    @app.on_event("startup")
-    async def startup_push():
-        # Render Starter no duerme: el scheduler de notificaciones vive dentro
-        # de este mismo proceso (sin cron externo).
-        await push.start_scheduler()
 
     @app.get("/api/health")
     def health():

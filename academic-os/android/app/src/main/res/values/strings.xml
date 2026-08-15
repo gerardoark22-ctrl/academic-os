@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Academic OS</string>
+    <string name="title_activity_main">Academic OS</string>
+    <string name="package_name">com.gerardex.academicos</string>
+    <string name="custom_url_scheme">com.gerardex.academicos</string>
+</resources>

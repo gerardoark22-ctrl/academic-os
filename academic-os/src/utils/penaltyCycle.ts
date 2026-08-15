@@ -14,7 +14,7 @@ import { getTopicBacklogs } from './hadesRules';
 import { todayISO, underworldDays } from './gamification';
 import { getDailyGoalMinutes } from './dailyGoal';
 import { getLocalParts, minutesFromHHMM } from './localTime';
-import { getPushTimes } from './pushClient';
+import { getNotifTimes } from './localNotifications';
 
 export async function runPenaltyCycle(): Promise<void> {
   const store = usePlayerStore.getState();
@@ -39,7 +39,7 @@ export async function runPenaltyCycle(): Promise<void> {
 
   // Regla 7 (antes 21:00): marca del cierre nocturno si la meta no se cumplió.
   if (player.lastNinePmNotifyDate !== todayISO()) {
-    const { night } = await getPushTimes();
+    const { night } = await getNotifTimes();
     const goalMet = (player.todayStudyMinutes ?? 0) >= getDailyGoalMinutes(player);
     if (!goalMet && minutesFromHHMM(getLocalParts().timeHHMM) >= minutesFromHHMM(night)) {
       await store.markNinePmNotify();

@@ -12,6 +12,9 @@
     "simulate": "npx tsx scripts/simulate-day-debug.ts"
   },
   "dependencies": {
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/core": "^7.6.8",
+    "@capacitor/local-notifications": "^7.0.7",
     "dexie": "^4.0.11",
     "framer-motion": "^12.6.3",
     "lucide-react": "^0.487.0",
@@ -20,6 +23,8 @@
     "zustand": "^5.0.3"
   },
   "devDependencies": {
+    "@capacitor/android": "^7.6.8",
+    "@capacitor/cli": "^7.6.8",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@vitejs/plugin-react": "^4.4.1",

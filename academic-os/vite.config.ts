@@ -23,9 +23,6 @@ export default defineConfig({
       manifest: false,
       workbox: {
         globPatterns: ['**/*.{html,js,css,png,svg,json,woff2}'],
-        // Handler de Web Push (public/push-sw.js) inyectado dentro del sw.js
-        // generado. Evita migrar a injectManifest solo por el evento 'push'.
-        importScripts: ['push-sw.js'],
         // El service worker no debe responder por la API: el sync necesita
         // datos frescos, no una copia cacheada.
         navigateFallbackDenylist: [/^\/api\//],

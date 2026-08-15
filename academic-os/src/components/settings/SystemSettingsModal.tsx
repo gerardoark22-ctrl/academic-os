@@ -18,11 +18,12 @@ import {
 import {
   DEFAULT_MORNING_TIME,
   DEFAULT_NIGHT_TIME,
-  ensurePushSubscription,
-  getPushTimes,
-  sendTestPush,
-  setPushTimes,
-} from '../../utils/pushClient';
+  ensureNotifPermission,
+  getNotifTimes,
+  isNative,
+  sendTestNotification,
+  setNotifTimes,
+} from '../../utils/localNotifications';
 
 interface Props {
   open: boolean;
@@ -50,12 +51,9 @@ export function SystemSettingsModal({ open, onClose }: Props) {
   const [night, setNight] = useState(DEFAULT_NIGHT_TIME);
   const [pushMsg, setPushMsg] = useState<string | null>(null);
 
-  const pushPermission =
-    typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
-
   useEffect(() => {
     if (!open) return;
-    void getPushTimes().then((t) => {
+    void getNotifTimes().then((t) => {
       setMorning(t.morning);
       setNight(t.night);
     });
@@ -95,7 +93,7 @@ export function SystemSettingsModal({ open, onClose }: Props) {
       if (animChanged) {
         await setShowAnimations(animations);
       }
-      await setPushTimes({ morning, night });
+      await setNotifTimes({ morning, night });
 
       onClose();
     } catch (e) {
@@ -220,12 +218,13 @@ export function SystemSettingsModal({ open, onClose }: Props) {
         <details className="group border-t border-marble-crack/40 pt-3">
           <summary className="title-carved flex cursor-pointer list-none items-center gap-2 text-sm marker:content-none [&::-webkit-details-marker]:hidden">
             <span className="inline-block transition-transform group-open:rotate-90">▸</span>
-            🔔 Notificaciones push
+            🔔 Notificaciones locales
           </summary>
           <div className="mt-3 pl-5">
           <p className="body-parchment mb-3 text-xs text-readable-dim">
-            Llegan al celular <strong>con la app cerrada</strong>. Además del briefing y el cierre,
-            el servidor avisa al empezar y terminar cada bloque, por misiones vencidas y por examen a menos de 7 días.
+            Las programa <strong>Android</strong> en el celular: llegan con la app cerrada y sin
+            internet. Además del briefing y el cierre, avisa al empezar y terminar cada bloque, por
+            misiones vencidas y por examen a menos de 7 días.
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 text-sm">
@@ -251,9 +250,9 @@ export function SystemSettingsModal({ open, onClose }: Props) {
             Hora de Perú. Por defecto {DEFAULT_MORNING_TIME} y {DEFAULT_NIGHT_TIME}.
           </p>
 
-          {pushPermission === 'denied' && (
+          {!isNative && (
             <p className="flavor-brutal mt-3 text-xs text-danger">
-              Bloqueaste las notificaciones en este navegador — hay que reactivarlas desde los ajustes del sitio.
+              Estás en el navegador: las notificaciones locales solo corren dentro del APK de Android.
             </p>
           )}
 
@@ -262,31 +261,33 @@ export function SystemSettingsModal({ open, onClose }: Props) {
               variant="ghost"
               size="sm"
               onClick={() => {
-                void ensurePushSubscription().then((r) =>
+                void sendTestNotification().then((ok) =>
                   setPushMsg(
-                    r === 'ok'
-                      ? '✅ Dispositivo suscrito'
-                      : r === 'denied'
-                        ? '❌ Permiso denegado'
-                        : r === 'unsupported'
-                          ? '⚠️ Este navegador no soporta push'
-                          : '❌ No se pudo suscribir (¿servidor caído?)',
+                    ok
+                      ? '📨 Aviso de prueba en 5 segundos'
+                      : '❌ Sin permiso de notificaciones (revisa los ajustes de la app)',
                   ),
                 );
               }}
             >
-              Activar en este dispositivo
+              Enviar notificación de prueba
             </EpicButton>
             <EpicButton
               variant="ghost"
               size="sm"
               onClick={() => {
-                void sendTestPush().then((ok) =>
-                  setPushMsg(ok ? '📨 Push de prueba enviado' : '❌ No se pudo enviar la prueba'),
+                void ensureNotifPermission().then((r) =>
+                  setPushMsg(
+                    r === 'ok'
+                      ? '✅ Permiso concedido'
+                      : r === 'denied'
+                        ? '❌ Permiso denegado — actívalo en Ajustes de Android'
+                        : '⚠️ Solo disponible en la app de Android',
+                  ),
                 );
               }}
             >
-              Enviar push de prueba
+              Pedir permiso
             </EpicButton>
           </div>
           {pushMsg && <p className="body-parchment mt-2 text-xs text-highlight">{pushMsg}</p>}
