@@ -42,7 +42,16 @@ async function enviarFCM(projectId, accessToken, token, { title, body }) {
   const r = await fetch(`https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`, {
     method: 'POST',
     headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ message: { token, notification: { title, body } } }),
+    body: JSON.stringify({
+      message: {
+        token,
+        notification: { title, body },
+        // Urgency alta: sin esto Android puede retener el push (Doze/ahorro de
+        // batería) hasta que se abra la app, en vez de despertarla al toque.
+        webpush: { headers: { Urgency: 'high' } },
+        android: { priority: 'high' },
+      },
+    }),
   });
   if (!r.ok) throw new Error(`FCM ${r.status}: ${await r.text()}`);
 }
