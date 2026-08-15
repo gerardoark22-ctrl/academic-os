@@ -8,6 +8,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from env_loader import load_env_file
+
+load_env_file()
+
 import uvicorn
 from api.server import app
 

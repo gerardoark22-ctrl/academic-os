@@ -1,0 +1,334 @@
+/* ── RPG stat labels (Sabiduría, etc.) ── */
+.rpg-stat-label {
+  font-family: var(--font-epic, 'Cinzel', serif);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(245, 230, 200, 0.88);
+  line-height: 1.3;
+}
+
+.rpg-stat-value {
+  font-size: 1.375rem !important;
+  font-weight: 700;
+  margin-top: 0.25rem;
+}
+
+.stat-hero-label {
+  font-family: var(--font-epic, 'Cinzel', serif);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 215, 0, 0.85);
+}
+
+.stat-hero-value {
+  font-size: 2rem !important;
+  line-height: 1.1;
+  margin-top: 0.25rem;
+}
+
+.stat-hero-sub {
+  font-size: 0.75rem;
+  color: rgba(235, 220, 195, 0.75);
+  font-style: italic;
+}
+
+.stat-block-hero.stat-block-level {
+  border-color: rgba(255, 215, 0, 0.35);
+}
+
+.stat-hero-tier-1 .stat-block-level {
+  animation: stat-pulse-border 2.5s ease-in-out infinite;
+  border-width: 3px;
+  box-shadow: 0 4px 0 var(--ink), 0 0 18px rgba(255, 215, 0, 0.25);
+}
+
+.stat-hero-tier-2 .stat-block-level {
+  animation: stat-pulse-border 2s ease-in-out infinite;
+  box-shadow: 0 4px 0 var(--ink), 0 0 24px rgba(255, 215, 0, 0.35);
+}
+
+.stat-hero-tier-3 .stat-block-level {
+  animation: stat-pulse-border 1.8s ease-in-out infinite, stat-float 3s ease-in-out infinite;
+}
+
+.stat-hero-tier-4 .stat-block-level {
+  animation: stat-pulse-border 1.4s ease-in-out infinite, stat-float 2.5s ease-in-out infinite;
+  border-color: #FFD700;
+  box-shadow: 0 4px 0 var(--ink), 0 0 32px rgba(255, 215, 0, 0.55), 0 0 60px rgba(255, 69, 0, 0.25);
+}
+
+.stat-fire-bg {
+  background: radial-gradient(circle at 50% 100%, rgba(255, 69, 0, 0.25) 0%, transparent 70%);
+  animation: fire-flicker 1.5s ease-in-out infinite;
+}
+
+@keyframes stat-pulse-border {
+  0%, 100% { border-color: rgba(255, 215, 0, 0.4); filter: brightness(1); }
+  50% { border-color: rgba(255, 215, 0, 0.95); filter: brightness(1.08); }
+}
+
+@keyframes stat-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+@keyframes fire-flicker {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.panel-hero-tier-1 { box-shadow: 0 8px 0 var(--ink), 0 0 24px rgba(255, 215, 0, 0.15); }
+.panel-hero-tier-2 { box-shadow: 0 8px 0 var(--ink), 0 0 32px rgba(255, 215, 0, 0.22); }
+.panel-hero-tier-3 {
+  box-shadow: 0 8px 0 var(--ink), 0 0 40px rgba(255, 215, 0, 0.3);
+  animation: panel-tier-glow 3s ease-in-out infinite;
+}
+.panel-hero-tier-4 {
+  box-shadow: 0 8px 0 var(--ink), 0 0 50px rgba(255, 215, 0, 0.45);
+  animation: panel-tier-glow 2s ease-in-out infinite;
+}
+
+@keyframes panel-tier-glow {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.06); }
+}
+
+.panel-theme-blood-avatar-tier-2 .avatar-frame {
+  border-color: #DC143C !important;
+  box-shadow: 0 0 28px rgba(220, 20, 60, 0.45) !important;
+}
+
+.panel-theme-golden-avatar-tier-2 .avatar-frame {
+  border-color: #FFD700 !important;
+  box-shadow: 0 0 32px rgba(255, 215, 0, 0.5) !important;
+}
+
+.panel-theme-inferno .avatar-frame,
+.avatar-theme-inferno.avatar-tier-glow {
+  border-color: #FF4500 !important;
+  box-shadow: 0 0 36px rgba(255, 69, 0, 0.55) !important;
+}
+
+.panel-theme-inferno .avatar-frame {
+  animation: avatar-border-pulse 1.6s ease-in-out infinite;
+}
+
+.panel-theme-titan .avatar-frame {
+  border-color: #FFD700 !important;
+  border-width: 6px !important;
+  box-shadow: 0 0 40px rgba(255, 215, 0, 0.6), 0 0 24px rgba(255, 69, 0, 0.4) !important;
+  animation: avatar-border-pulse 1.2s ease-in-out infinite;
+}
+
+.avatar-theme-titan.avatar-tier-glow {
+  background: conic-gradient(from 0deg, rgba(255, 69, 0, 0.2), rgba(255, 215, 0, 0.25), rgba(255, 69, 0, 0.2));
+  animation: avatar-glow-spin 4s linear infinite;
+}
+
+.avatar-theme-inferno.avatar-tier-glow {
+  background: radial-gradient(circle, rgba(255, 69, 0, 0.2) 0%, transparent 70%);
+  animation: fire-flicker 1.4s ease-in-out infinite;
+}
+
+.avatar-frame-tier-1 {
+  border-width: 5px !important;
+  animation: avatar-border-pulse 2.5s ease-in-out infinite;
+}
+
+.avatar-frame-tier-2 {
+  border-width: 5px !important;
+  animation: avatar-border-pulse 2s ease-in-out infinite;
+}
+
+.avatar-frame-tier-3 {
+  border-width: 6px !important;
+  animation: avatar-border-pulse 1.8s ease-in-out infinite;
+}
+
+.avatar-frame-tier-4 {
+  border-width: 6px !important;
+  animation: avatar-border-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes avatar-border-pulse {
+  0%, 100% { box-shadow: 0 8px 0 var(--ink), 0 0 20px rgba(255, 215, 0, 0.3); }
+  50% { box-shadow: 0 8px 0 var(--ink), 0 0 36px rgba(255, 215, 0, 0.65); }
+}
+
+.avatar-tier-glow {
+  position: absolute;
+  inset: -8px;
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.avatar-tier-2.avatar-tier-glow {
+  background: radial-gradient(circle, rgba(255, 215, 0, 0.12) 0%, transparent 70%);
+  animation: avatar-glow-spin 8s linear infinite;
+}
+
+.avatar-tier-3.avatar-tier-glow,
+.avatar-tier-4.avatar-tier-glow {
+  background: conic-gradient(from 0deg, transparent, rgba(255, 215, 0, 0.15), transparent);
+  animation: avatar-glow-spin 6s linear infinite;
+}
+
+@keyframes avatar-glow-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.avatar-epic-fire-ring {
+  background: radial-gradient(ellipse at bottom, rgba(255, 69, 0, 0.35) 0%, transparent 65%);
+  animation: fire-flicker 1.2s ease-in-out infinite;
+  z-index: 0;
+}
+
+.avatar-skin-insignia {
+  position: absolute;
+  top: -10px;
+  left: -10px;
+  z-index: 20;
+  width: 2.5rem;
+  height: 2.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.35rem;
+  background: linear-gradient(145deg, #3d2818, #1a0f08);
+  border: 2px solid rgba(255, 215, 0, 0.6);
+  border-radius: 50%;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 12px rgba(255, 215, 0, 0.3);
+}
+
+.avatar-skin-insignia-golden { border-color: #FFD700; box-shadow: 0 0 16px rgba(255, 215, 0, 0.6); }
+.avatar-skin-insignia-spartan { border-color: #DC143C; }
+.avatar-skin-insignia-mythic { animation: insignia-pulse 1.5s ease-in-out infinite; }
+
+@keyframes insignia-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+}
+
+.avatar-achievement-medal {
+  position: absolute;
+  z-index: 15;
+  width: 1.75rem;
+  height: 1.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  background: rgba(0, 0, 0, 0.65);
+  border: 1px solid rgba(255, 215, 0, 0.4);
+  border-radius: 50%;
+}
+
+.avatar-medal-pos-0 { top: 8%; right: -8px; }
+.avatar-medal-pos-1 { top: 38%; right: -12px; }
+.avatar-medal-pos-2 { bottom: 18%; right: -8px; }
+.avatar-medal-pos-3 { bottom: 8%; left: -8px; }
+
+.avatar-medal-active {
+  border-color: #FFD700;
+  box-shadow: 0 0 12px rgba(255, 215, 0, 0.5);
+}
+
+.avatar-badge-slot {
+  position: absolute;
+  z-index: 14;
+  font-size: 0.85rem;
+  padding: 0.15rem 0.35rem;
+  background: rgba(26, 15, 8, 0.9);
+  border: 1px solid rgba(205, 133, 63, 0.5);
+  border-radius: 2px;
+}
+
+.avatar-badge-pos-0 { left: -12px; top: 25%; }
+.avatar-badge-pos-1 { left: -12px; bottom: 28%; }
+.avatar-badge-pos-2 { bottom: -8px; left: 50%; transform: translateX(-50%); }
+
+.hero-triumph-badge {
+  font-family: var(--font-epic, serif);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  padding: 0.3rem 0.65rem;
+  background: linear-gradient(180deg, rgba(60, 40, 20, 0.95), rgba(20, 12, 6, 0.98));
+  border: 1px solid rgba(255, 215, 0, 0.45);
+  color: #FFD700;
+  box-shadow: 0 0 10px rgba(255, 215, 0, 0.15);
+}
+
+.forge-workshop {
+  background: linear-gradient(180deg, rgba(30, 22, 14, 0.6), rgba(12, 8, 4, 0.8));
+}
+
+.forge-tab-btn {
+  font-size: 0.8125rem;
+  padding: 0.4rem 0.75rem;
+}
+
+.forge-tab-active {
+  background: rgba(255, 215, 0, 0.12);
+  border-bottom: 2px solid #FFD700;
+  color: #FFD700;
+}
+
+.forge-epic-card.forge-card-equipped {
+  box-shadow: 0 0 20px rgba(255, 215, 0, 0.35) !important;
+  border-color: #FFD700 !important;
+}
+
+.forge-theme-card {
+  padding: 0.75rem;
+  border: 2px solid rgba(139, 105, 20, 0.4);
+  background: rgba(0, 0, 0, 0.35);
+  text-align: center;
+  cursor: pointer;
+}
+
+.forge-theme-card.forge-theme-active {
+  border-color: #FFD700;
+  box-shadow: 0 0 18px rgba(255, 215, 0, 0.3);
+}
+
+.forge-theme-swatch {
+  height: 2.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.forge-theme-swatch.panel-theme-bronze {
+  background: linear-gradient(135deg, #8B4513, #CD853F, #5C3310);
+}
+
+.forge-theme-swatch.panel-theme-blood {
+  background: linear-gradient(135deg, #8B0000, #DC143C, #4A0000);
+}
+
+.forge-theme-swatch.panel-theme-golden {
+  background: linear-gradient(135deg, #FFD700, #FFA500, #B8860B);
+}
+
+.forge-theme-swatch.panel-theme-inferno {
+  background: linear-gradient(135deg, #FF4500, #FF6347, #8B0000);
+}
+
+.forge-theme-swatch.panel-theme-titan {
+  background: linear-gradient(135deg, #FFD700, #FF4500, #E6E6FA, #FFD700);
+}
+
+.iface-apollo .header-ruin { box-shadow: 0 4px 24px rgba(255, 215, 0, 0.12); }
+.iface-poseidon .header-ruin { background: linear-gradient(180deg, rgba(13, 40, 60, 0.95), rgba(8, 25, 40, 0.98)); }
+.iface-hephaestus .header-ruin { background: linear-gradient(180deg, rgba(40, 12, 6, 0.98), rgba(20, 6, 2, 0.99)); }
+
+.forge-ach-unlocked { animation: ach-glow 2.5s ease-in-out infinite; }
+
+@keyframes ach-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(255, 215, 0, 0.2); }
+  50% { box-shadow: 0 0 16px rgba(255, 215, 0, 0.45); }
+}

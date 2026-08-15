@@ -1,5 +1,7 @@
 """Estadísticas — Academic OS v2."""
 
+import hashlib
+import json
 from datetime import date, timedelta
 
 import customtkinter as ctk
@@ -13,6 +15,7 @@ import database as db
 from ai.openai_client import AcademicAI
 from config import COLORS
 from modules.components import MetricCard
+from modules.theme_engine import font, lbl
 
 
 class EstadisticasFrame(ctk.CTkFrame):
@@ -20,6 +23,7 @@ class EstadisticasFrame(ctk.CTkFrame):
         super().__init__(master, fg_color=COLORS["bg"], **kwargs)
         self.app = app
         self.ai = AcademicAI(db.get_ai_api_key())
+        self._charts_fp: str | None = None
         self._build()
         self.refresh()
 
@@ -27,7 +31,7 @@ class EstadisticasFrame(ctk.CTkFrame):
         scroll = ctk.CTkScrollableFrame(self, fg_color=COLORS["bg"])
         scroll.pack(fill="both", expand=True, padx=16, pady=16)
 
-        ctk.CTkLabel(scroll, text="📊 ESTADÍSTICAS", font=ctk.CTkFont(size=26, weight="bold")).pack(anchor="w", pady=(0, 16))
+        lbl(scroll, "📊 ESTADÍSTICAS", style="display").pack(anchor="w", pady=(0, 16))
 
         metrics = ctk.CTkFrame(scroll, fg_color="transparent")
         metrics.pack(fill="x", pady=8)
@@ -77,6 +81,23 @@ class EstadisticasFrame(ctk.CTkFrame):
         c.draw()
         c.get_tk_widget().pack(fill="both", expand=True, padx=8, pady=8)
 
+    def _charts_fingerprint(self) -> str:
+        hoy = date.today().isoformat()
+        _, c_map, _ = db.get_avance_maps()
+        with db.get_connection() as conn:
+            dom_rows = conn.execute(
+                "SELECT dominio, COUNT(*) as n FROM temas GROUP BY dominio",
+            ).fetchall()
+        payload = {
+            "horas_semana": db.get_horas_semana(),
+            "avance_cursos": {str(k): v for k, v in c_map.items()},
+            "cumplimiento": db.get_cumplimiento_semana(),
+            "dominio": {r["dominio"]: r["n"] for r in dom_rows},
+            "criticos": len(db.get_temas_cero_pista()),
+        }
+        raw = json.dumps(payload, sort_keys=True, default=str)
+        return hashlib.md5(raw.encode()).hexdigest()
+
     def refresh(self):
         hoy = date.today().isoformat()
         ayer = (date.today() - timedelta(1)).isoformat()
@@ -92,23 +113,30 @@ class EstadisticasFrame(ctk.CTkFrame):
         done, total = db.tareas_completadas_hoy()
         self.m_tareas.set(f"{done}/{total}", "completadas hoy")
 
+        fp = self._charts_fingerprint()
+        if fp == self._charts_fp:
+            return
+        self._charts_fp = fp
+
         self._chart_horas()
         self._chart_cursos()
         self._chart_cumplimiento()
         self._chart_dominio()
+        self._refresh_criticos()
 
+    def _refresh_criticos(self):
         for w in self.criticos_box.winfo_children():
             w.destroy()
         criticos = db.get_temas_cero_pista()
         if not criticos:
             ctk.CTkLabel(self.criticos_box, text="¡Sin temas críticos!", text_color=COLORS["green"]).pack(anchor="w")
         for t in criticos[:12]:
-            card = ctk.CTkFrame(self.criticos_box, fg_color="#2a1515", corner_radius=8)
+            card = ctk.CTkFrame(self.criticos_box, fg_color=COLORS["row_overdue"], corner_radius=8)
             card.pack(fill="x", pady=3)
             row = ctk.CTkFrame(card, fg_color="transparent")
             row.pack(fill="x", padx=10, pady=8)
             dias = db.dias_restantes(t.get("fecha_examen"))
-            ctk.CTkLabel(row, text=f"{t['nombre']} — {t['curso_nombre']}", font=ctk.CTkFont(weight="bold")).pack(side="left")
+            ctk.CTkLabel(row, text=f"{t['nombre']} — {t['curso_nombre']}", font=font("subtitle"), text_color=COLORS["text"]).pack(side="left")
             ctk.CTkLabel(row, text=f"Examen en {dias}d", text_color=COLORS["red"]).pack(side="left", padx=8)
             ctk.CTkButton(row, text="📅 Agendar TB", width=100,
                           command=lambda tid=t["id"], cid=t["curso_id"]: self._agendar(t["nombre"], cid)).pack(side="right")
@@ -128,9 +156,11 @@ class EstadisticasFrame(ctk.CTkFrame):
 
     def _chart_cursos(self):
         cursos = db.get_cursos()
+        _, c_map, _ = db.get_avance_maps()
+        ranked = sorted(cursos, key=lambda x: c_map.get(x["id"], (0, 0, 0.0))[2])
         nombres, vals, cols = [], [], []
-        for c in sorted(cursos, key=lambda x: db.avance_curso(x["id"])[2]):
-            _, _, av = db.avance_curso(c["id"])
+        for c in ranked:
+            _, _, av = c_map.get(c["id"], (0, 0, 0.0))
             nombres.append(c["nombre"][:14])
             vals.append(av * 100)
             cols.append(c["color"])
@@ -191,14 +221,34 @@ class EstadisticasFrame(ctk.CTkFrame):
     def _reporte(self):
         self.ai.set_api_key(db.get_ai_api_key())
         datos = db.get_datos_reporte_semanal()
-        try:
-            txt = self.ai.generar_reporte_semanal(datos)
-        except Exception as e:
-            txt = str(e)
         m = ctk.CTkToplevel(self)
         m.title("Reporte Semanal")
         m.geometry("560x480")
         m.grab_set()
+        m.configure(fg_color=COLORS["surface"])
         tb = ctk.CTkTextbox(m, width=520, height=420)
         tb.pack(padx=20, pady=20)
-        tb.insert("1.0", txt)
+        tb.insert("1.0", "⏳ Generando reporte con IA…")
+        tb.configure(state="disabled")
+
+        if not self.ai.api_key:
+            tb.configure(state="normal")
+            tb.delete("1.0", "end")
+            tb.insert("1.0", "⚠️ Configura tu API Key de DeepSeek en ⚙️ Configuración")
+            tb.configure(state="disabled")
+            return
+
+        def work():
+            return self.ai.generar_reporte_semanal(datos)
+
+        def on_ok(txt):
+            tb.configure(state="normal")
+            tb.delete("1.0", "end")
+            tb.insert("1.0", txt)
+
+        def on_err(err: Exception):
+            tb.configure(state="normal")
+            tb.delete("1.0", "end")
+            tb.insert("1.0", f"⚠️ {err}")
+
+        self.ai.run_async(m, work, on_ok, on_err)

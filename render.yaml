@@ -1,11 +1,11 @@
-# Render.com — despliegue en la nube (gratis)
-# https://render.com
+# Render — Academic OS (Starter + disco persistente)
+# Costo aprox: $7/mes (Starter) + $0.25/mes (1 GB disco) = ~$7.25/mes
 
 services:
   - type: web
     name: academic-os
     runtime: docker
-    plan: free
+    plan: starter
     healthCheckPath: /api/health
     envVars:
       - key: ACADEMIC_OS_DATA

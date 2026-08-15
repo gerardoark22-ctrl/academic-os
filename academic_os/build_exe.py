@@ -31,8 +31,22 @@ def main():
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
 
     if DIST.exists():
+        preserved: list[Path] = []
+        for name in ("academic_os.db", "academic_os.db-wal", "academic_os.db-shm", "LEEME.txt"):
+            p = DIST / name
+            if p.exists():
+                tmp = ROOT / f".preserve_{name}"
+                shutil.copy2(p, tmp)
+                preserved.append(tmp)
         shutil.rmtree(DIST, ignore_errors=True)
+    else:
+        preserved = []
     DIST.mkdir(parents=True, exist_ok=True)
+    for tmp in preserved:
+        dest = DIST / tmp.name.replace(".preserve_", "")
+        if tmp.exists():
+            shutil.copy2(tmp, dest)
+            tmp.unlink(missing_ok=True)
     (ROOT / "build").mkdir(parents=True, exist_ok=True)
 
     common = [
@@ -73,18 +87,25 @@ def main():
         str(ROOT / "run_web.py"),
     ])
 
+    desktop_exe = DIST / "AcademicOS-Escritorio.exe"
+    if desktop_exe.exists():
+        for alias in ("app.exe", "AcademicOS.exe"):
+            shutil.copy2(desktop_exe, DIST / alias)
+            print(f"[OK] Alias: {DIST / alias}")
+
     readme = DIST / "LEEME.txt"
     readme.write_text(
         "Academic OS - Ejecutables\n"
         "========================\n\n"
-        "AcademicOS-Escritorio.exe  -> App completa Windows\n"
-        "AcademicOS-Web.exe         -> Servidor para Android (misma WiFi)\n\n"
+        "app.exe / AcademicOS-Escritorio.exe  -> App completa Windows\n"
+        "AcademicOS-Web.exe                   -> Servidor para Android (misma WiFi)\n\n"
+        "Datos guardados en: %%LOCALAPPDATA%%\\AcademicOS\\\n"
         "Nube (Android desde cualquier lugar): lee CLOUD.md en la carpeta del proyecto\n",
         encoding="utf-8",
     )
 
     print()
-    for name in ("AcademicOS-Web.exe", "AcademicOS-Escritorio.exe"):
+    for name in ("app.exe", "AcademicOS-Escritorio.exe", "AcademicOS-Web.exe"):
         p = DIST / name
         if p.exists():
             print(f"[OK] {p} ({p.stat().st_size // 1024 // 1024} MB)")

@@ -1,104 +1,119 @@
-# Academic OS — Android desde cualquier lugar (nube)
+# Academic OS — Usarlo en el celular y sincronizar con la laptop
 
-Publica la app en internet para abrirla desde el teléfono **sin tener la PC encendida** ni estar en la misma WiFi.
+## Cómo funciona (importante entender esto)
 
----
+La app guarda tus datos **dentro del navegador** de cada dispositivo
+(IndexedDB). Por eso funciona sin internet. La consecuencia: el celular y la
+laptop tienen **cada uno su propia copia**.
 
-## Opción recomendada: Render.com (gratis)
+Para unirlas, el servidor de tu PC guarda un **estado compartido**: cada equipo
+sube el suyo cuando cambia algo y baja el del otro cuando entra. El botón ☁️
+arriba a la derecha muestra cómo va:
 
-### Requisitos
-- Cuenta en [render.com](https://render.com) (gratis con GitHub)
-- El proyecto en un repositorio de GitHub
+| Ícono | Significado |
+|-------|-------------|
+| ☁️ | Sincronizado |
+| ⏳ | Sincronizando |
+| 📴 | Sin conexión al servidor — sigues trabajando, sube cuando vuelva |
+| ⚠️ | Editaste en los dos equipos: tócalo y elige cuál gana |
+| ❌ | Error (normalmente token incorrecto) |
 
-### Pasos
-
-#### 1. Sube el proyecto a GitHub
-
-**A) Crea el repositorio en GitHub (obligatorio primero)**
-1. Abre [github.com/new](https://github.com/new)
-2. Nombre: `academic-os` (exactamente así)
-3. **No** añadas README, .gitignore ni licencia
-4. Clic en **Create repository**
-
-**B) Sube el código desde PowerShell**
-
-Opción fácil: doble clic en **`SUBIR_GITHUB.bat`**
-
-O manualmente (reemplaza `TU_USUARIO` por tu usuario real, ej. `gerardoark22-ctrl`):
-
-```powershell
-cd C:\AcademicOS
-
-# Si origin ya existe con URL incorrecta, corrígela:
-git remote set-url origin https://github.com/gerardoark22-ctrl/academic-os.git
-
-# Si no existe origin:
-# git remote add origin https://github.com/gerardoark22-ctrl/academic-os.git
-
-git add .
-git commit -m "Academic OS"    # si dice "nothing to commit", está bien — ya está guardado
-
-git branch -M main             # renombra master → main (opcional)
-git push -u origin main
-```
-
-**Errores comunes**
-
-| Error | Solución |
-|-------|----------|
-| `remote origin already exists` | `git remote set-url origin https://github.com/TU_USUARIO/academic-os.git` |
-| `src refspec main does not match any` | Tu rama es `master` → usa `git push -u origin master` o `git branch -M main` |
-| `Repository not found` | Crea el repo en github.com/new **antes** del push |
-| `nothing to commit` | Normal si ya hiciste commit; sigue con `git push` |
-
-#### 2. Crear servicio en Render
-1. Entra a [dashboard.render.com](https://dashboard.render.com)
-2. **New +** → **Blueprint** (lee `render.yaml` automáticamente)
-3. Conecta tu repositorio de GitHub
-4. Confirma el despliegue
-
-#### 3. Variables de entorno
-En Render → tu servicio → **Environment**:
-
-| Variable | Valor |
-|----------|--------|
-| `ACADEMIC_OS_DATA` | `/var/data` |
-| `ACADEMIC_OS_CLOUD` | `1` |
-| `DEEPSEEK_API_KEY` | tu clave `sk-...` (opcional) |
-
-#### 4. Disco persistente
-En **Disks** → Add disk:
-- **Mount path:** `/var/data`
-- **Size:** 1 GB
-
-Sin esto, los datos se pierden al reiniciar.
-
-#### 5. URL y Android
-Tras el deploy tendrás:
-```
-https://academic-os-xxxx.onrender.com
-```
-
-En Android: Chrome → esa URL → **⋮** → **Añadir a pantalla de inicio**
-
-> El plan gratis “duerme” tras inactividad; la primera carga puede tardar ~1 min.
+Sincroniza solo cuando **la PC está encendida** con `INICIAR_INTERNET.bat`
+abierto. Sin eso el celular funciona igual, pero guarda los cambios para
+después.
 
 ---
 
-## Opción rápida: ngrok (sin subir a GitHub)
+## Paso a paso (2 minutos)
 
-1. `python run_web.py` en la PC
-2. `ngrok http 8765`
-3. Abre la URL `https://xxxx.ngrok-free.app` en el celular
+1. Doble clic en **`INICIAR_INTERNET.bat`**
+2. Espera la línea `https://xxxx.trycloudflare.com`
+3. Abre esa URL en **Chrome** del Android
+4. Menú **⋮** → **Añadir a pantalla de inicio**
+5. Toca el botón **☁️** arriba a la derecha → **"Conectar con tu correo"**
+6. Pon tu correo (`gerardoark22@gmail.com`) → te llega un código de 6 dígitos
+   → escríbelo → listo, conectado
 
-La PC debe estar encendida.
+El código vence en 5 minutos y sirve una sola vez. Una vez conectado, ese
+navegador queda recordado — no vuelves a pedir código salvo que borres los
+datos del navegador o toques "Desconectar" en el mismo botón ☁️.
+
+Solo tu correo (`ACADEMICOS_OWNER_EMAIL` en el `.env`) puede pedir códigos;
+cualquier otro correo lo rechaza sin enviar nada.
+
+### ⚠️ La URL gratuita cambia cada vez
+
+`trycloudflare.com` te da una dirección distinta en cada arranque. Para el
+navegador, una URL nueva es **otro sitio**: aparecerá vacío al entrar. No
+perdiste nada — al entrar con `?t=TU_TOKEN` la app baja todo del servidor.
+
+Si te molesta repetirlo, con una cuenta gratuita de Cloudflare se puede crear
+un túnel con nombre fijo (requiere un dominio propio). No está configurado acá.
 
 ---
 
-## Resumen
+## Tu token
 
-| Método | Cualquier red | PC encendida |
-|--------|---------------|--------------|
-| **Render** | ✅ | ❌ |
-| **ngrok** | ✅ | ✅ |
-| **WiFi local** | Solo misma red | ✅ |
+El botón ☁️ lo consigue solo, pidiéndolo con tu correo — no necesitas copiarlo
+a mano. Igual vive en `academic_os/.env`, línea `ACADEMICOS_TOKEN=`, por si
+algún día necesitas verlo. Sirve para que alguien que adivine tu URL no pueda
+leer ni borrar tus datos.
+
+Si borras esa línea, la API deja de pedir token (cómodo en tu WiFi, **no**
+recomendado con el túnel abierto).
+
+---
+
+## Dónde están tus datos realmente
+
+| Lugar | Qué guarda |
+|-------|-----------|
+| Navegador del celular | Tu copia local (funciona offline) |
+| Navegador de la laptop | Su propia copia local |
+| `academic_os.db` en la PC | El estado compartido que une a las dos |
+
+**Haz backup igual.** El botón 💾 exporta un JSON. Si formateas la PC o borras
+los datos del navegador, es lo único que te salva.
+
+---
+
+## Otras opciones
+
+### Misma WiFi, sin túnel
+`INICIAR_MOVIL.bat` → abre `http://192.168.x.x:8765` en el celular. Solo
+funciona en tu casa, pero la URL no cambia (mientras el router te dé la misma
+IP), así que el navegador conserva los datos.
+
+### Render (nube, PC apagada)
+El plan gratis **no** tiene disco persistente: los datos del servidor se borran
+en cada reinicio. `render.yaml` está configurado con plan **Starter (de pago)**.
+Si lo despliegas como *Blueprint*, Render aplicará ese plan de pago — no el
+gratuito. Para uso real con la PC encendida, quédate con Cloudflare.
+
+---
+
+## Si algo falla
+
+**El servidor no arranca / se cierra solo**
+Versiones incompatibles de FastAPI. Ejecuta:
+`pip install -U "fastapi>=0.115" "uvicorn[standard]>=0.27"`
+
+**El botón ☁️ sale ❌**
+Token vencido o inválido. Tócalo, "Desconectar", y vuelve a conectar con tu
+correo.
+
+**No te llega el código al correo**
+Revisa `ACADEMICOS_SMTP_PASS` en `academic_os/.env` — Gmail necesita una
+"contraseña de aplicación" (no tu contraseña normal), se genera en
+myaccount.google.com/apppasswords. Si ya tenías una y dejó de funcionar,
+puede haber sido revocada: genera una nueva.
+
+**El botón ☁️ sale 📴**
+La PC está apagada, suspendida, o cerraste la ventana del túnel.
+
+**Sale ⚠️ (conflicto)**
+Editaste en los dos equipos sin sincronizar. Tócalo y elige cuál conserva. Lo
+descartado queda respaldado en el servidor (`odyssey_state_prev`).
+
+**Quiero comprobar que el sync funciona**
+`cd academic_os` y `python test_sync.py` — usa una base de prueba aparte.

@@ -1,11 +1,21 @@
-customtkinter>=5.2.0
+# ── Servidor web / móvil (lo que usa INICIAR_INTERNET.bat) ──
+# fastapi anterior a 0.115 NO es compatible con starlette 1.x: si se mezclan,
+# el servidor no arranca ("Router.__init__() got an unexpected keyword
+# argument 'on_startup'"). Verificado funcionando con fastapi 0.140.0.
+fastapi>=0.115.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.0.0
 openai>=1.0.0
+fpdf2>=2.7.0
+# Notificaciones push a Android con la app cerrada (VAPID). Arrastra py-vapid
+# y cryptography, que es lo que genera el par de claves.
+pywebpush>=2.0.0
+
+# ── Solo app de escritorio (no hacen falta para usar la app en el celular) ──
+customtkinter>=5.2.0
 plyer>=2.1.0
 matplotlib>=3.8.0
 pillow>=10.0.0
-fastapi>=0.110.0
-uvicorn[standard]>=0.27.0
-pydantic>=2.0.0
 
 # Solo para generar .exe (opcional):
 # pyinstaller>=6.0.0

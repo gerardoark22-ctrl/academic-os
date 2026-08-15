@@ -1,0 +1,20 @@
+---
+description: Código congelado — no editar Academic OS salvo desbloqueo explícito
+alwaysApply: true
+---
+
+# Academic OS — CÓDIGO CONGELADO
+
+Existe el archivo `CODEBASE.FROZEN` en la raíz del repo. El usuario dejó de programar la app para **usarla y estudiar**.
+
+## Reglas para el agente
+
+1. **NO** editar, crear ni borrar archivos en `academic-os/` ni scripts del repo salvo que el usuario diga explícitamente **"desbloquear código"** o ejecute `DESBLOQUEAR_CODIGO.bat`.
+2. **NO** ejecutar cambios de npm, build, git commit, ni refactors "de mejora".
+3. Responder preguntas de **uso** de la app (horario, misiones, XP, cursos).
+4. Si hay bug crítico (datos corruptos, app no abre), explicar el fix y pedir que desbloquee primero con `DESBLOQUEAR_CODIGO.bat`.
+5. Ver `CODIGO_CONGELADO.md` para el usuario.
+
+## Desbloqueo
+
+El usuario ejecuta `DESBLOQUEAR_CODIGO.bat` y elimina o renombra `CODEBASE.FROZEN` cuando quiera volver a desarrollar.

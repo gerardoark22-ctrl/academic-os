@@ -1,0 +1,34 @@
+{
+  "name": "academic-os-odyssey",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "node node_modules/typescript/bin/tsc -b && node node_modules/vite/bin/vite.js build",
+    "preview": "vite preview",
+    "icons": "node scripts/generate-icons.mjs",
+    "build:all": "npm run icons && npm run build",
+    "simulate": "npx tsx scripts/simulate-day-debug.ts"
+  },
+  "dependencies": {
+    "dexie": "^4.0.11",
+    "framer-motion": "^12.6.3",
+    "lucide-react": "^0.487.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.17",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.2",
+    "vite-plugin-pwa": "^0.21.2",
+    "workbox-cli": "^7.3.0"
+  }
+}

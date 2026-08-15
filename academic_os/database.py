@@ -1,11 +1,27 @@
 """Capa de datos SQLite — Academic OS v2."""
 
 import json
+import shutil
 import sqlite3
+import threading
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
-from typing import Any, Optional
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Callable, Iterator, Optional, TypeVar
 
-from config import CONFIG_DEFAULTS, DB_PATH, DB_VERSION, DOMINIO_SCORE, DEEPSEEK_BUILTIN_KEY, TB_HORA_FIN, TB_HORA_INICIO, TB_SLOT_MIN
+from config import (
+    BACKUP_DIR,
+    CONFIG_DEFAULTS,
+    DB_PATH,
+    DB_VERSION,
+    DEEPSEEK_BUILTIN_KEY,
+    DOMINIO_SCORE,
+    LEGACY_DB_CANDIDATES,
+    TB_HORA_FIN,
+    TB_HORA_INICIO,
+    TB_SLOT_MIN,
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cursos (
@@ -99,30 +115,266 @@ CREATE TABLE IF NOT EXISTS config (
 """
 
 
-def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+T = TypeVar("T")
+
+_cache_gen = 0
+_cache_lock = threading.Lock()
+_cache_store: dict[str, tuple[int, Any]] = {}
+
+_burst_lock = threading.Lock()
+_burst_depth = 0
+_burst_conn: sqlite3.Connection | None = None
+_pragmas_applied = False
+
+
+class _ManagedConnection:
+    """Wrapper: no cierra la conexión compartida del burst."""
+
+    def __init__(self, conn: sqlite3.Connection, *, owned: bool):
+        self._conn = conn
+        self._owned = owned
+
+    def __enter__(self) -> sqlite3.Connection:
+        return self._conn
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._owned:
+            self._conn.close()
+
+    def __getattr__(self, name: str):
+        return getattr(self._conn, name)
+
+
+def invalidate_cache() -> None:
+    """Invalida caches en memoria (avance, exámenes, badges, tareas)."""
+    global _cache_gen
+    with _cache_lock:
+        _cache_gen += 1
+
+
+def _commit(conn: sqlite3.Connection) -> None:
+    conn.commit()
+    invalidate_cache()
+
+
+def _cache_get(key: str, builder: Callable[[], T]) -> T:
+    global _cache_gen
+    with _cache_lock:
+        gen = _cache_gen
+        hit = _cache_store.get(key)
+        if hit and hit[0] == gen:
+            return hit[1]
+    value = builder()
+    with _cache_lock:
+        _cache_store[key] = (_cache_gen, value)
+    return value
+
+
+@contextmanager
+def db_burst() -> Iterator[sqlite3.Connection]:
+    """Reutiliza una conexión SQLite durante un burst de lecturas UI."""
+    global _burst_conn, _burst_depth
+    with _burst_lock:
+        _burst_depth += 1
+        if _burst_conn is None:
+            _burst_conn = _open_connection()
+        conn = _burst_conn
+    try:
+        yield conn
+    finally:
+        with _burst_lock:
+            _burst_depth -= 1
+            if _burst_depth <= 0:
+                _burst_depth = 0
+                if _burst_conn is not None:
+                    try:
+                        _burst_conn.close()
+                    except sqlite3.Error:
+                        pass
+                    _burst_conn = None
+
+
+def _apply_connection_pragmas(conn: sqlite3.Connection) -> None:
+    global _pragmas_applied
     conn.execute("PRAGMA foreign_keys = ON")
+    if not _pragmas_applied:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA temp_store = MEMORY")
+        _pragmas_applied = True
+
+
+def _open_connection() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(DB_PATH), timeout=30)
+    conn.row_factory = sqlite3.Row
+    _apply_connection_pragmas(conn)
     return conn
 
 
-def init_db() -> None:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+def get_connection() -> _ManagedConnection:
+    if _burst_depth > 0 and _burst_conn is not None:
+        return _ManagedConnection(_burst_conn, owned=False)
+    return _ManagedConnection(_open_connection(), owned=True)
+
+
+@lru_cache(maxsize=None)
+def _columnas_tabla(tabla: str) -> frozenset:
     with get_connection() as conn:
-        if _needs_migration(conn):
-            _migrate_schema(conn)
-        else:
-            conn.executescript(SCHEMA)
+        return frozenset(r["name"] for r in conn.execute(f"PRAGMA table_info({tabla})"))
+
+
+def solo_columnas(tabla: str, datos: dict, *, permitir_id: bool = False) -> dict:
+    """Descarta claves que no son columnas reales de la tabla.
+
+    Los endpoints arman el SQL con los nombres de campo que manda el cliente.
+    Sin este filtro, un campo inventado revienta con un 500 y un `id` enviado a
+    mano puede pisar la clave primaria.
+    """
+    cols = _columnas_tabla(tabla)
+    return {
+        k: v for k, v in datos.items()
+        if k in cols and (permitir_id or k != "id")
+    }
+
+
+def _db_entity_count(path: Path) -> int:
+    try:
+        conn = sqlite3.connect(str(path))
+        total = 0
+        for table in ("cursos", "unidades", "temas", "tareas"):
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,),
+            ).fetchone()
+            if row:
+                total += conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        conn.close()
+        return total
+    except sqlite3.Error:
+        return 0
+
+
+def _legacy_db_candidates() -> list[Path]:
+    seen: set[str] = set()
+    out: list[Path] = []
+    for p in LEGACY_DB_CANDIDATES:
+        try:
+            resolved = p.resolve()
+        except OSError:
+            continue
+        key = str(resolved).lower()
+        if key in seen or not resolved.is_file():
+            continue
+        seen.add(key)
+        out.append(resolved)
+    return out
+
+
+def _pick_richest_db(candidates: list[Path]) -> Path | None:
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: (p.stat().st_size, p.stat().st_mtime))
+
+
+def bootstrap_database_location() -> Path:
+    """Unifica datos en AppData; importa la BD más completa de rutas legacy."""
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+    target = DB_PATH.resolve()
+    legacy = _legacy_db_candidates()
+    legacy = [p for p in legacy if p.resolve() != target]
+
+    if not DB_PATH.exists():
+        best = _pick_richest_db(legacy)
+        if best:
+            shutil.copy2(best, DB_PATH)
+        return DB_PATH
+
+    best_legacy = _pick_richest_db(legacy)
+    if best_legacy:
+        legacy_n = _db_entity_count(best_legacy)
+        current_n = _db_entity_count(DB_PATH)
+        if legacy_n > current_n + 1:
+            backup_database("antes_importar_legacy")
+            shutil.copy2(best_legacy, DB_PATH)
+            invalidate_cache()
+    return DB_PATH
+
+
+def backup_database(tag: str = "manual") -> Path | None:
+    if not DB_PATH.exists():
+        return None
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dest = BACKUP_DIR / f"academic_os_{tag}_{ts}.db"
+    shutil.copy2(DB_PATH, dest)
+    backups = sorted(BACKUP_DIR.glob("academic_os_*.db"), key=lambda p: p.stat().st_mtime)
+    for old in backups[:-15]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    return dest
+
+
+def backup_database_if_needed(tag: str = "inicio") -> Path | None:
+    """Backup al inicio solo una vez por día (cierre y manual siguen siempre)."""
+    if tag != "inicio":
+        return backup_database(tag)
+    if not DB_PATH.exists():
+        return None
+    hoy = date.today().isoformat()
+    if get_config("ultimo_backup_inicio", "") == hoy:
+        return None
+    dest = backup_database(tag)
+    if dest:
+        set_config("ultimo_backup_inicio", hoy)
+    return dest
+
+
+def flush_database() -> None:
+    """Fuerza escritura a disco (al cerrar la app)."""
+    if not DB_PATH.exists():
+        return
+    with get_connection() as conn:
+        conn.execute("PRAGMA wal_checkpoint(FULL)")
+        conn.commit()
+
+
+def get_data_info() -> dict:
+    bootstrap_database_location()
+    info = {
+        "db_path": str(DB_PATH.resolve()),
+        "backup_dir": str(BACKUP_DIR.resolve()),
+        "exists": DB_PATH.exists(),
+        "size_kb": DB_PATH.stat().st_size // 1024 if DB_PATH.exists() else 0,
+    }
+    if DB_PATH.exists():
+        with get_connection() as conn:
+            info["cursos"] = conn.execute(
+                "SELECT COUNT(*) FROM cursos WHERE activo = 1"
+            ).fetchone()[0]
+            info["unidades"] = conn.execute("SELECT COUNT(*) FROM unidades").fetchone()[0]
+            info["temas"] = conn.execute("SELECT COUNT(*) FROM temas").fetchone()[0]
+    return info
+
+
+def init_db() -> None:
+    bootstrap_database_location()
+    with get_connection() as conn:
+        conn.executescript(SCHEMA)
         for k, v in CONFIG_DEFAULTS.items():
             conn.execute("INSERT OR IGNORE INTO config (clave, valor) VALUES (?, ?)", (k, v))
+        _seed_if_empty(conn)
+        _run_safe_migrations(conn)
+        _ensure_ai_key(conn)
         conn.execute(
             "INSERT OR REPLACE INTO config (clave, valor) VALUES ('db_version', ?)",
             (DB_VERSION,),
         )
-        _seed_if_empty(conn)
-        _apply_schema_patches(conn)
-        _ensure_ai_key(conn)
         conn.commit()
+    backup_database_if_needed("inicio")
 
 
 def _ensure_ai_key(conn: sqlite3.Connection) -> None:
@@ -144,6 +396,13 @@ def _ensure_ai_key(conn: sqlite3.Connection) -> None:
         )
 
 
+def _run_safe_migrations(conn: sqlite3.Connection) -> None:
+    """Migraciones incrementales — nunca borra datos existentes."""
+    if _table_exists(conn, "cursos") and not _table_exists(conn, "unidades"):
+        conn.executescript(SCHEMA)
+    _apply_schema_patches(conn)
+
+
 def _apply_schema_patches(conn: sqlite3.Connection) -> None:
     """Añade columnas nuevas sin borrar datos."""
     if not _table_exists(conn, "tareas"):
@@ -153,6 +412,20 @@ def _apply_schema_patches(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE tareas ADD COLUMN recordatorio INTEGER DEFAULT 0")
     if "recordatorio_hora" not in cols:
         conn.execute("ALTER TABLE tareas ADD COLUMN recordatorio_hora TIME")
+    _apply_indexes(conn)
+
+
+def _apply_indexes(conn: sqlite3.Connection) -> None:
+    """Índices idempotentes para consultas frecuentes."""
+    for sql in (
+        "CREATE INDEX IF NOT EXISTS idx_temas_unidad ON temas(unidad_id)",
+        "CREATE INDEX IF NOT EXISTS idx_temas_curso ON temas(curso_id)",
+        "CREATE INDEX IF NOT EXISTS idx_tareas_estado_fecha ON tareas(estado, fecha_limite)",
+        "CREATE INDEX IF NOT EXISTS idx_bloques_fecha ON bloques(fecha)",
+        "CREATE INDEX IF NOT EXISTS idx_unidades_curso ON unidades(curso_id)",
+        "CREATE INDEX IF NOT EXISTS idx_sesiones_fecha ON sesiones(fecha)",
+    ):
+        conn.execute(sql)
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -175,7 +448,7 @@ def _needs_migration(conn: sqlite3.Connection) -> bool:
 
 
 def _migrate_schema(conn: sqlite3.Connection) -> None:
-    """Migra schema in-place sin borrar el archivo (evita WinError 32)."""
+    """DEPRECATED — destructivo (DROP tablas). Usar _run_safe_migrations()."""
     config_backup: list[dict] = []
     if _table_exists(conn, "config"):
         config_backup = [dict(r) for r in conn.execute("SELECT clave, valor FROM config").fetchall()]
@@ -265,7 +538,7 @@ def get_config(clave: str, default: str = "") -> str:
 def set_config(clave: str, valor: str) -> None:
     with get_connection() as conn:
         conn.execute("INSERT OR REPLACE INTO config (clave, valor) VALUES (?, ?)", (clave, valor))
-        conn.commit()
+        _commit(conn)
 
 
 def get_ai_api_key() -> str:
@@ -295,7 +568,7 @@ def crear_curso(nombre: str, tipo: str, color: str) -> int:
             "INSERT INTO cursos (nombre, tipo, color) VALUES (?, ?, ?)",
             (nombre, tipo, color),
         )
-        conn.commit()
+        _commit(conn)
         return cur.lastrowid
 
 
@@ -306,7 +579,7 @@ def actualizar_curso(curso_id: int, **kwargs) -> None:
     vals = list(kwargs.values()) + [curso_id]
     with get_connection() as conn:
         conn.execute(f"UPDATE cursos SET {cols} WHERE id = ?", vals)
-        conn.commit()
+        _commit(conn)
 
 
 def archivar_curso(curso_id: int) -> None:
@@ -343,7 +616,7 @@ def crear_unidad(curso_id: int, nombre: str, orden: int = 0,
                VALUES (?, ?, ?, ?, ?)""",
             (curso_id, nombre, orden, fecha_examen, descripcion),
         )
-        conn.commit()
+        _commit(conn)
         return cur.lastrowid
 
 
@@ -354,13 +627,13 @@ def actualizar_unidad(unidad_id: int, **kwargs) -> None:
     vals = list(kwargs.values()) + [unidad_id]
     with get_connection() as conn:
         conn.execute(f"UPDATE unidades SET {cols} WHERE id = ?", vals)
-        conn.commit()
+        _commit(conn)
 
 
 def eliminar_unidad(unidad_id: int) -> None:
     with get_connection() as conn:
         conn.execute("DELETE FROM unidades WHERE id = ?", (unidad_id,))
-        conn.commit()
+        _commit(conn)
 
 
 # ── Temas ───────────────────────────────────────────────────────────────────
@@ -415,25 +688,26 @@ def crear_tema(unidad_id: int, curso_id: int, nombre: str, **kwargs) -> int:
                 kwargs.get("notas", ""),
             ),
         )
-        conn.commit()
+        _commit(conn)
         return cur.lastrowid
 
 
 def actualizar_tema(tema_id: int, **kwargs) -> None:
+    kwargs = solo_columnas("temas", kwargs)
     if not kwargs:
         return
     cols = ", ".join(f"{k} = ?" for k in kwargs)
     vals = list(kwargs.values()) + [tema_id]
     with get_connection() as conn:
         conn.execute(f"UPDATE temas SET {cols} WHERE id = ?", vals)
-        conn.commit()
+        _commit(conn)
 
 
 def eliminar_tema(tema_id: int) -> None:
     with get_connection() as conn:
         conn.execute("DELETE FROM subtemas WHERE tema_id = ?", (tema_id,))
         conn.execute("DELETE FROM temas WHERE id = ?", (tema_id,))
-        conn.commit()
+        _commit(conn)
 
 
 # ── Subtemas ────────────────────────────────────────────────────────────────
@@ -450,7 +724,7 @@ def crear_subtema(tema_id: int, nombre: str) -> int:
         cur = conn.execute(
             "INSERT INTO subtemas (tema_id, nombre) VALUES (?, ?)", (tema_id, nombre)
         )
-        conn.commit()
+        _commit(conn)
         return cur.lastrowid
 
 
@@ -461,7 +735,7 @@ def actualizar_subtema(subtema_id: int, **kwargs) -> None:
     vals = list(kwargs.values()) + [subtema_id]
     with get_connection() as conn:
         conn.execute(f"UPDATE subtemas SET {cols} WHERE id = ?", vals)
-        conn.commit()
+        _commit(conn)
 
 
 # ── Lógica de dominio / semáforo ────────────────────────────────────────────
@@ -489,33 +763,71 @@ def calcular_semaforo(dias: Optional[int], avance: float) -> str:
     return "VERDE"
 
 
-def avance_unidad(unidad_id: int) -> tuple[int, int, float]:
-    with get_connection() as conn:
-        total = conn.execute(
-            "SELECT COUNT(*) FROM temas WHERE unidad_id = ?", (unidad_id,)
-        ).fetchone()[0]
-        dominados = conn.execute(
-            "SELECT COUNT(*) FROM temas WHERE unidad_id = ? AND dominio = 'lo_tengo'",
-            (unidad_id,),
-        ).fetchone()[0]
-    pct = dominados / total if total else 0.0
+def peso_dominio(dominio: str | None) -> float:
+    """Peso 0–1: cero=0, entendiendo=⅓, casi listo=⅔, lo tengo=1."""
+    return DOMINIO_SCORE.get(dominio or "cero_pista", 0) / 100.0
+
+
+def _stats_dominios(dominios: list[str]) -> tuple[int, int, float]:
+    total = len(dominios)
+    if not total:
+        return 0, 0, 0.0
+    dominados = sum(1 for d in dominios if d == "lo_tengo")
+    pct = sum(peso_dominio(d) for d in dominios) / total
     return dominados, total, pct
 
 
-def avance_curso(curso_id: int) -> tuple[int, int, float]:
+def get_avance_maps() -> tuple[dict[int, tuple[int, int, float]], dict[int, tuple[int, int, float]], dict[int, dict[str, int]]]:
+    """Una sola lectura de temas → avance por unidad/curso y conteos de dominio."""
+    return _cache_get("avance_maps", _compute_avance_maps)
+
+
+def _compute_avance_maps() -> tuple[dict[int, tuple[int, int, float]], dict[int, tuple[int, int, float]], dict[int, dict[str, int]]]:
+    by_unidad: dict[int, list[str]] = {}
+    by_curso: dict[int, list[str]] = {}
+    dominio_unidad: dict[int, dict[str, int]] = {}
     with get_connection() as conn:
-        total = conn.execute(
-            "SELECT COUNT(*) FROM temas WHERE curso_id = ?", (curso_id,)
-        ).fetchone()[0]
-        dominados = conn.execute(
-            "SELECT COUNT(*) FROM temas WHERE curso_id = ? AND dominio = 'lo_tengo'",
-            (curso_id,),
-        ).fetchone()[0]
-    pct = dominados / total if total else 0.0
-    return dominados, total, pct
+        rows = conn.execute(
+            "SELECT unidad_id, curso_id, dominio FROM temas",
+        ).fetchall()
+    for r in rows:
+        uid, cid = r["unidad_id"], r["curso_id"]
+        dom = r["dominio"] or "cero_pista"
+        by_unidad.setdefault(uid, []).append(dom)
+        by_curso.setdefault(cid, []).append(dom)
+        bucket = dominio_unidad.setdefault(uid, {})
+        bucket[dom] = bucket.get(dom, 0) + 1
+    u_map = {uid: _stats_dominios(doms) for uid, doms in by_unidad.items()}
+    c_map = {cid: _stats_dominios(doms) for cid, doms in by_curso.items()}
+    return u_map, c_map, dominio_unidad
 
 
-def contar_dominio_unidad(unidad_id: int) -> dict[str, int]:
+def avance_unidad(unidad_id: int, u_map: dict[int, tuple[int, int, float]] | None = None) -> tuple[int, int, float]:
+    if u_map is not None:
+        return u_map.get(unidad_id, (0, 0, 0.0))
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT dominio FROM temas WHERE unidad_id = ?", (unidad_id,),
+        ).fetchall()
+    return _stats_dominios([r["dominio"] or "cero_pista" for r in rows])
+
+
+def avance_curso(curso_id: int, c_map: dict[int, tuple[int, int, float]] | None = None) -> tuple[int, int, float]:
+    if c_map is not None:
+        return c_map.get(curso_id, (0, 0, 0.0))
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT dominio FROM temas WHERE curso_id = ?", (curso_id,),
+        ).fetchall()
+    return _stats_dominios([r["dominio"] or "cero_pista" for r in rows])
+
+
+def contar_dominio_unidad(
+    unidad_id: int,
+    dominio_map: dict[int, dict[str, int]] | None = None,
+) -> dict[str, int]:
+    if dominio_map is not None:
+        return dominio_map.get(unidad_id, {})
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT dominio, COUNT(*) as n FROM temas WHERE unidad_id = ? GROUP BY dominio",
@@ -568,8 +880,193 @@ def resumen_dominio_global() -> dict:
     }
 
 
+INACTIVO_UMBRAL_H = 4.0   # horas sin bloque completado (8:00–23:00)
+PESO_TIMEBLOCKING = 0.85  # 85% del score
+PESO_TAREAS = 0.15        # 15% del score
+MAX_SCORE_TB = int(PESO_TIMEBLOCKING * 100)
+
+
+def _horas_ventana_dia() -> tuple[float, float]:
+    """Horas transcurridas desde 8:00 y horas restantes hasta 23:00."""
+    now = datetime.now()
+    h, m = now.hour, now.minute
+    if h < 8:
+        return 0.0, 15.0
+    if h >= 23:
+        return 15.0, 0.0
+    transcurridas = (h - 8) + m / 60.0
+    restantes = (23 - h) - m / 60.0
+    return transcurridas, max(0.0, restantes)
+
+
+def _horas_sin_bloque_completado(hoy: str) -> float:
+    """Horas dentro de la ventana 8:00–23:00 sin completar ningún bloque."""
+    now = datetime.now()
+    if now.hour < 8:
+        return 0.0
+    bloques = get_bloques(hoy)
+    completados = [b for b in bloques if b.get("estado") == "completado"]
+    inicio_ventana = datetime.combine(now.date(), datetime.min.time().replace(hour=8))
+
+    if not completados:
+        ref = inicio_ventana
+    else:
+        ultimo = max(completados, key=lambda b: b.get("hora_fin") or "00:00:00")
+        try:
+            parts = (ultimo.get("hora_fin") or "08:00:00")[:8].split(":")
+            ref = datetime.combine(
+                now.date(),
+                datetime.min.time().replace(hour=int(parts[0]), minute=int(parts[1])),
+            )
+        except (ValueError, IndexError):
+            ref = inicio_ventana
+        if ref < inicio_ventana:
+            ref = inicio_ventana
+
+    limite = min(now, datetime.combine(now.date(), datetime.min.time().replace(hour=23)))
+    if limite <= ref:
+        return 0.0
+    return (limite - ref).total_seconds() / 3600.0
+
+
+def get_rendimiento_hoy() -> dict:
+    """Métricas de ejecución del día — TimeBlocking pesa ~85% del score."""
+    hoy = date.today().isoformat()
+    done_b, total_b, pct_bloques = progreso_dia(hoy)
+    tareas_hoy = get_tareas_por_fecha(hoy)
+    tareas_done = sum(1 for t in tareas_hoy if t["estado"] == "completada")
+    tareas_pend_hoy = sum(1 for t in tareas_hoy if t["estado"] != "completada")
+    tareas_total_hoy = tareas_done + tareas_pend_hoy
+    pendientes = contar_tareas_pendientes()
+    bloques = get_bloques(hoy)
+    sin_bloque = sum(
+        1 for t in get_tareas()
+        if t["estado"] != "completada" and t.get("fecha_limite") == hoy
+        and not any(b.get("tarea_id") == t["id"] for b in bloques)
+    )
+    hora = datetime.now().hour
+    horas_ventana, horas_restantes = _horas_ventana_dia()
+    horas_inactivas = _horas_sin_bloque_completado(hoy)
+    en_ventana = 8 <= hora < 23
+
+    # Score: 85% TimeBlocking · 15% tareas
+    if total_b > 0:
+        score_tb = pct_bloques * PESO_TIMEBLOCKING
+    else:
+        score_tb = 0.0
+        if en_ventana and horas_ventana >= 2:
+            score_tb = -20.0
+
+    if tareas_total_hoy > 0:
+        score_tareas = (tareas_done / tareas_total_hoy) * (PESO_TAREAS * 100)
+    else:
+        score_tareas = min(8.0, tareas_done * 4.0)
+
+    score = int(max(0, min(100, score_tb + score_tareas)))
+
+    inactivo_critico = en_ventana and horas_inactivas >= INACTIVO_UMBRAL_H
+    if inactivo_critico:
+        score = min(score, 10)
+    if en_ventana and total_b == 0 and horas_ventana >= 4:
+        score = min(score, 20)
+    if sin_bloque >= 2 and hora >= 10:
+        score = max(0, score - min(15, sin_bloque * 4))
+    if en_ventana and pct_bloques < 20 and total_b >= 3 and hora >= 14:
+        score = max(0, score - 20)
+
+    return {
+        "bloques_done": done_b,
+        "bloques_total": total_b,
+        "pct_bloques": pct_bloques,
+        "tareas_done": tareas_done,
+        "tareas_pend_hoy": tareas_pend_hoy,
+        "pendientes_total": pendientes,
+        "sin_agendar_hoy": sin_bloque,
+        "score": score,
+        "score_tb": int(score_tb),
+        "score_tareas": int(score_tareas),
+        "max_score_tb": MAX_SCORE_TB,
+        "inactivo": inactivo_critico,
+        "inactivo_4h": inactivo_critico,
+        "inactivo_umbral": INACTIVO_UMBRAL_H,
+        "horas_inactivas": round(horas_inactivas, 1),
+        "horas_ventana": round(horas_ventana, 1),
+        "horas_restantes": round(horas_restantes, 1),
+        "hora": hora,
+    }
+
+
+def mensaje_rendimiento(rend: dict) -> tuple[str, str, str]:
+    """Retorna (titulo, mensaje, color_key) — tono duro, prioriza TimeBlocking."""
+    s = rend["score"]
+    hi = rend.get("horas_inactivas", 0)
+    pct = int(rend["pct_bloques"])
+    bd, bt = rend["bloques_done"], rend["bloques_total"]
+
+    if rend.get("inactivo_4h") or rend.get("inactivo"):
+        max_tb = rend.get("max_score_tb", MAX_SCORE_TB)
+        return (
+            "💀 4+ HORAS MUERTAS",
+            f"Llevas {hi:.0f}h sin completar UN bloque (8:00–23:00). "
+            f"Cuatro horas evaporadas. Eso no es descanso — es autosabotaje. "
+            f"TimeBlocking AHORA: agenda el siguiente bloque y complétalo. "
+            f"Score TB: {rend.get('score_tb', 0)}/{max_tb}.",
+            "red",
+        )
+
+    if rend["bloques_total"] == 0 and rend["hora"] >= 10:
+        return (
+            "🚨 CERO BLOQUES HOY",
+            "No tienes NADA agendado en TimeBlocking. Sin bloques no hay plan; sin plan no hay nota. "
+            "Agenda mínimo 3 bloques para hoy y ejecútalos. Ahora.",
+            "red",
+        )
+
+    if s < 20:
+        return (
+            "⛔ RENDIMIENTO PATHÉTICO",
+            f"{pct}% de bloques ({bd}/{bt}). TimeBlocking manda: sin bloques completados "
+            f"tu día académico no cuenta. Deja de posponer — 30 minutos de foco, ya.",
+            "red",
+        )
+
+    if s < 40:
+        return (
+            "🔥 ESTÁS FALLANDO HOY",
+            f"Solo {bd}/{bt} bloques ({pct}%). Te quedan ~{rend.get('horas_restantes', 0):.0f}h "
+            f"en ventana activa y {rend['sin_agendar_hoy']} tarea(s) sin bloquear. "
+            "Recupera el día en TimeBlocking o mañana pagas doble.",
+            "orange",
+        )
+
+    if s < 60:
+        return (
+            "⚠️ MEDIOCRE",
+            f"TimeBlocking al {pct}% — aceptable no es suficiente. "
+            f"Cierra {rend['tareas_pend_hoy']} tarea(s) y completa al menos "
+            f"{max(1, bt - bd)} bloque(s) más.",
+            "yellow",
+        )
+
+    if s < 80:
+        return (
+            "🟡 CASI BIEN",
+            f"Bloques {bd}/{bt} ({pct}%). Falta remate: bloquea lo pendiente "
+            f"y sube tu score de TB ({rend.get('score_tb', 0)}/{rend.get('max_score_tb', MAX_SCORE_TB)}).",
+            "yellow",
+        )
+
+    return (
+        "✅ EN EJECUCIÓN",
+        f"TimeBlocking {pct}% · {bd}/{bt} bloques · {rend['tareas_done']} tareas. "
+        "Mantén el ritmo; no aflojes antes de las 23:00.",
+        "green",
+    )
+
+
 def get_resumen_riesgo() -> dict:
-    examenes = get_examenes_proximos()
+    u_map, _, _ = get_avance_maps()
+    examenes = get_examenes_proximos(u_map)
     criticos = [
         e for e in examenes
         if e.get("dias_restantes") is not None and e["dias_restantes"] <= 7
@@ -581,7 +1078,7 @@ def get_resumen_riesgo() -> dict:
     ]
     res = resumen_dominio_global()
     return {
-        "nivel": indice_riesgo_global(),
+        "nivel": indice_riesgo_global(u_map),
         "examenes_criticos": criticos,
         "examenes_proximos": examenes[:6],
         "tareas_vencidas": vencidas,
@@ -591,7 +1088,9 @@ def get_resumen_riesgo() -> dict:
     }
 
 
-def indice_riesgo_global() -> int:
+def indice_riesgo_global(u_map: dict[int, tuple[int, int, float]] | None = None) -> int:
+    if u_map is None:
+        u_map, _, _ = get_avance_maps()
     cursos = get_cursos()
     if not cursos:
         return 0
@@ -602,7 +1101,7 @@ def indice_riesgo_global() -> int:
             scores.append(20)
             continue
         for u in unidades:
-            _, _, av = avance_unidad(u["id"])
+            _, _, av = avance_unidad(u["id"], u_map)
             dias = dias_restantes(u.get("fecha_examen"))
             sem = calcular_semaforo(dias, av)
             if sem == "ROJO_CRITICO":
@@ -616,7 +1115,13 @@ def indice_riesgo_global() -> int:
     return int(sum(scores) / len(scores))
 
 
-def get_examenes_proximos() -> list[dict]:
+def get_examenes_proximos(u_map: dict[int, tuple[int, int, float]] | None = None) -> list[dict]:
+    if u_map is not None:
+        return _build_examenes_proximos(u_map)
+    return _cache_get("examenes_proximos", lambda: _build_examenes_proximos(get_avance_maps()[0]))
+
+
+def _build_examenes_proximos(u_map: dict[int, tuple[int, int, float]]) -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
             """SELECT u.*, c.nombre as curso_nombre, c.color as curso_color
@@ -627,7 +1132,7 @@ def get_examenes_proximos() -> list[dict]:
     result = []
     for r in rows:
         d = dict(r)
-        dom, tot, av = avance_unidad(d["id"])
+        dom, tot, av = avance_unidad(d["id"], u_map)
         dias = dias_restantes(d.get("fecha_examen"))
         d["dias_restantes"] = dias
         d["avance"] = av
@@ -638,16 +1143,26 @@ def get_examenes_proximos() -> list[dict]:
     return result
 
 
-def proximo_examen_curso(curso_id: int) -> Optional[dict]:
-    examenes = [e for e in get_examenes_proximos() if e["curso_id"] == curso_id]
-    return examenes[0] if examenes else None
+def proximo_examen_curso(curso_id: int, examenes: list[dict] | None = None) -> Optional[dict]:
+    if examenes is None:
+        examenes = get_examenes_proximos()
+    for e in examenes:
+        if e["curso_id"] == curso_id:
+            return e
+    return None
 
 
-def curso_en_alerta() -> int:
+def curso_en_alerta(u_map: dict[int, tuple[int, int, float]] | None = None) -> int:
+    if u_map is not None:
+        return _compute_curso_en_alerta(u_map)
+    return _cache_get("curso_alerta", lambda: _compute_curso_en_alerta(get_avance_maps()[0]))
+
+
+def _compute_curso_en_alerta(u_map: dict[int, tuple[int, int, float]]) -> int:
     count = 0
     for c in get_cursos():
         for u in get_unidades(c["id"]):
-            _, _, av = avance_unidad(u["id"])
+            _, _, av = avance_unidad(u["id"], u_map)
             sem = calcular_semaforo(dias_restantes(u.get("fecha_examen")), av)
             if sem in ("ROJO", "ROJO_CRITICO", "AMARILLO"):
                 count += 1
@@ -683,30 +1198,34 @@ def get_tarea(tarea_id: int) -> Optional[dict]:
 
 
 def crear_tarea(**kwargs) -> int:
+    kwargs = solo_columnas("tareas", kwargs)
+    if not kwargs.get("titulo"):
+        raise ValueError("La tarea necesita un título")
     keys = list(kwargs.keys())
     with get_connection() as conn:
         cur = conn.execute(
             f"INSERT INTO tareas ({', '.join(keys)}) VALUES ({', '.join('?' * len(keys))})",
             list(kwargs.values()),
         )
-        conn.commit()
+        _commit(conn)
         return cur.lastrowid
 
 
 def actualizar_tarea(tarea_id: int, **kwargs) -> None:
+    kwargs = solo_columnas("tareas", kwargs)
     if not kwargs:
         return
     cols = ", ".join(f"{k} = ?" for k in kwargs)
     vals = list(kwargs.values()) + [tarea_id]
     with get_connection() as conn:
         conn.execute(f"UPDATE tareas SET {cols} WHERE id = ?", vals)
-        conn.commit()
+        _commit(conn)
 
 
 def eliminar_tarea(tarea_id: int) -> None:
     with get_connection() as conn:
         conn.execute("DELETE FROM tareas WHERE id = ?", (tarea_id,))
-        conn.commit()
+        _commit(conn)
 
 
 def completar_tarea(tarea_id: int) -> None:
@@ -716,14 +1235,16 @@ def completar_tarea(tarea_id: int) -> None:
             "UPDATE bloques SET estado = 'completado' WHERE tarea_id = ? AND estado != 'completado'",
             (tarea_id,),
         )
-        conn.commit()
+        _commit(conn)
 
 
 def contar_tareas_pendientes() -> int:
-    with get_connection() as conn:
-        return conn.execute(
-            "SELECT COUNT(*) FROM tareas WHERE estado != 'completada'"
-        ).fetchone()[0]
+    def _count():
+        with get_connection() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM tareas WHERE estado != 'completada'"
+            ).fetchone()[0]
+    return _cache_get("tareas_pendientes", _count)
 
 
 def get_misiones_hoy() -> list[dict]:
@@ -768,7 +1289,7 @@ def get_tareas_por_fecha(fecha: str, incluir_completadas: bool = False) -> list[
 def purgar_tareas_completadas() -> int:
     with get_connection() as conn:
         cur = conn.execute("DELETE FROM tareas WHERE estado = 'completada'")
-        conn.commit()
+        _commit(conn)
         return cur.rowcount
 
 
@@ -882,13 +1403,16 @@ def asignar_tema_a_slots(
 
 
 def crear_bloque(**kwargs) -> int:
+    kwargs = solo_columnas("bloques", kwargs)
+    if not (kwargs.get("hora_inicio") and kwargs.get("hora_fin")):
+        raise ValueError("El bloque necesita hora de inicio y fin")
     keys = list(kwargs.keys())
     with get_connection() as conn:
         cur = conn.execute(
             f"INSERT INTO bloques ({', '.join(keys)}) VALUES ({', '.join('?' * len(keys))})",
             list(kwargs.values()),
         )
-        conn.commit()
+        _commit(conn)
         return cur.lastrowid
 
 
@@ -899,13 +1423,13 @@ def actualizar_bloque(bloque_id: int, **kwargs) -> None:
     vals = list(kwargs.values()) + [bloque_id]
     with get_connection() as conn:
         conn.execute(f"UPDATE bloques SET {cols} WHERE id = ?", vals)
-        conn.commit()
+        _commit(conn)
 
 
 def eliminar_bloque(bloque_id: int) -> None:
     with get_connection() as conn:
         conn.execute("DELETE FROM bloques WHERE id = ?", (bloque_id,))
-        conn.commit()
+        _commit(conn)
 
 
 def completar_bloque(bloque_id: int) -> None:
@@ -963,7 +1487,7 @@ def crear_sesion(**kwargs) -> int:
             f"INSERT INTO sesiones ({', '.join(keys)}) VALUES ({', '.join('?' * len(keys))})",
             list(kwargs.values()),
         )
-        conn.commit()
+        _commit(conn)
         return cur.lastrowid
 
 
@@ -1086,7 +1610,7 @@ def importar_datos(path: str) -> None:
                     f"INSERT INTO {t} ({cols}) VALUES ({', '.join('?' * len(row))})",
                     list(row.values()),
                 )
-        conn.commit()
+        _commit(conn)
 
 
 def borrar_todos_datos() -> None:
@@ -1094,10 +1618,10 @@ def borrar_todos_datos() -> None:
     with get_connection() as conn:
         for t in tablas:
             conn.execute(f"DELETE FROM {t}")
-        conn.commit()
+        _commit(conn)
     with get_connection() as conn:
         _seed_if_empty(conn)
-        conn.commit()
+        _commit(conn)
 
 
 def get_contexto_ia() -> dict:

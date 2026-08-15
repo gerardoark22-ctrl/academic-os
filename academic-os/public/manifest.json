@@ -1,0 +1,23 @@
+{
+  "name": "Academic OS: Odyssey of Gerardex",
+  "short_name": "Gerardex",
+  "description": "Conquista el conocimiento como un héroe griego",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#D9CEBA",
+  "theme_color": "#A68B4B",
+  "icons": [
+    {
+      "src": "/icons/gerardex-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/gerardex-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

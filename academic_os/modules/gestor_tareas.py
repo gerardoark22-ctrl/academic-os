@@ -10,6 +10,7 @@ import database as db
 from ai.openai_client import AcademicAI
 from config import COLORS, PRIORIDAD_COLORS, PRIORIDAD_LABELS, TB_SLOT_MIN, TIPOS_TAREA
 from modules.components import DatePicker, TimeSelector, safe_color
+from modules.theme_engine import font, is_light_mode, lbl, styled_entry, styled_option, styled_switch
 
 # Colores botones de acción en filas de tarea
 BTN_TB = COLORS["blue"]
@@ -28,6 +29,7 @@ class GestorTareasFrame(ctk.CTkFrame):
         self.agrup = "Por Urgencia"
         self.cal_year = date.today().year
         self.cal_month = date.today().month
+        self._tareas_cache: list | None = None
         self._drag_data: dict = {}  # legacy, no usado en Matriz Foco
         self._build()
         self.refresh()
@@ -37,9 +39,9 @@ class GestorTareasFrame(ctk.CTkFrame):
         hdr.pack(fill="x")
         top = ctk.CTkFrame(hdr, fg_color="transparent")
         top.pack(fill="x", padx=16, pady=12)
-        ctk.CTkLabel(top, text="📋 GESTOR DE TAREAS", font=ctk.CTkFont(size=22, weight="bold")).pack(side="left")
-        ctk.CTkButton(top, text="+ Nueva Tarea", fg_color=COLORS["accent"], command=self._modal_tarea).pack(side="right", padx=4)
-        ctk.CTkButton(top, text="🤖 Sugerencia IA", fg_color=COLORS["accent2"], command=self._sugerencia).pack(side="right", padx=4)
+        lbl(top, "📋 GESTOR DE TAREAS", style="title").pack(side="left")
+        ctk.CTkButton(top, text="+ Nueva Tarea", fg_color=COLORS["accent"], text_color=COLORS["text_on_accent"], command=self._modal_tarea).pack(side="right", padx=4)
+        ctk.CTkButton(top, text="🤖 Sugerencia IA", fg_color=COLORS["accent2"], text_color=COLORS["text_on_accent"], command=self._sugerencia).pack(side="right", padx=4)
 
         filt = ctk.CTkFrame(hdr, fg_color="transparent")
         filt.pack(fill="x", padx=16, pady=(0, 12))
@@ -47,7 +49,7 @@ class GestorTareasFrame(ctk.CTkFrame):
         self.agrup_m.pack(side="left")
         self.agrup_m.set(self.agrup)
 
-        self.tabs = ctk.CTkTabview(self, fg_color=COLORS["surface"])
+        self.tabs = ctk.CTkTabview(self, fg_color=COLORS["surface"], command=self._on_tab_change)
         self.tabs.pack(fill="both", expand=True, padx=12, pady=12)
         self.tab_lista = self.tabs.add("Lista")
         self.tab_matriz = self.tabs.add("Matriz Foco")
@@ -56,34 +58,56 @@ class GestorTareasFrame(ctk.CTkFrame):
         self.lista_scroll = ctk.CTkScrollableFrame(self.tab_lista, fg_color=COLORS["bg"])
         self.lista_scroll.pack(fill="both", expand=True)
 
-        # Matriz de Foco — 4 cuadrantes por urgencia temporal (reemplaza Kanban)
+        # Matriz de Foco — diseño HUD con cuadrantes contrastados
         self.matriz = ctk.CTkFrame(self.tab_matriz, fg_color=COLORS["bg"])
-        self.matriz.pack(fill="both", expand=True)
+        self.matriz.pack(fill="both", expand=True, padx=4, pady=4)
         self.matriz.grid_rowconfigure(0, weight=1)
         self.matriz.grid_rowconfigure(1, weight=1)
         self.matriz.grid_columnconfigure(0, weight=1)
         self.matriz.grid_columnconfigure(1, weight=1)
         self.matriz_lanes: dict[str, ctk.CTkScrollableFrame] = {}
+        self.matriz_counts: dict[str, ctk.CTkLabel] = {}
         lanes = [
-            ("critico", "🔴 CRÍTICO\n(vencidas / urgentes)", COLORS["red"], 0, 0),
-            ("hoy", "🟠 HOY Y MAÑANA", COLORS["orange"], 0, 1),
-            ("semana", "🔵 ESTA SEMANA", COLORS["blue"], 1, 0),
-            ("despues", "⚪ DESPUÉS / SIN FECHA", COLORS["surface_elevated"], 1, 1),
+            ("critico", "🔴 CRÍTICO", "Vencidas · urgentes", COLORS["red"], "#1f0a0a", 0, 0),
+            ("hoy", "🟠 HOY", "Hoy y mañana", COLORS["orange"], "#1f1208", 0, 1),
+            ("semana", "🔵 SEMANA", "Próximos 7 días", COLORS["blue"], "#0a1220", 1, 0),
+            ("despues", "⚪ DESPUÉS", "Sin fecha / lejanas", COLORS["text_sec"], COLORS["surface"], 1, 1),
         ]
-        for key, title, bg, row, col in lanes:
-            cell = ctk.CTkFrame(self.matriz, fg_color=bg, corner_radius=14)
-            cell.grid(row=row, column=col, sticky="nsew", padx=6, pady=6)
-            hdr = ctk.CTkFrame(cell, fg_color="transparent")
-            hdr.pack(fill="x", padx=8, pady=(10, 4))
-            ctk.CTkLabel(hdr, text=title, font=ctk.CTkFont(size=12, weight="bold")).pack(side="left")
+        for key, title, sub, accent, bg, row, col in lanes:
+            outer = ctk.CTkFrame(
+                self.matriz, fg_color=bg, corner_radius=16,
+                border_width=2, border_color=accent,
+            )
+            outer.grid(row=row, column=col, sticky="nsew", padx=8, pady=8)
+            hdr = ctk.CTkFrame(outer, fg_color=accent, corner_radius=10, height=48)
+            hdr.pack(fill="x", padx=8, pady=(8, 4))
+            hdr.pack_propagate(False)
+            ht = ctk.CTkFrame(hdr, fg_color="transparent")
+            ht.pack(fill="both", expand=True, padx=10, pady=6)
+            ctk.CTkLabel(
+                ht, text=title, font=font("subtitle"),
+                text_color=COLORS["text_on_accent"],
+            ).pack(side="left")
+            cnt_lbl = ctk.CTkLabel(
+                ht, text="0", width=28, height=24, corner_radius=12,
+                fg_color=COLORS["surface"], font=font("badge"),
+                text_color=accent,
+            )
+            cnt_lbl.pack(side="right")
+            self.matriz_counts[key] = cnt_lbl
+            ctk.CTkLabel(
+                outer, text=sub, font=font("small"),
+                text_color=COLORS["text_sec"],
+            ).pack(anchor="w", padx=12, pady=(0, 4))
             if key == "critico":
                 ctk.CTkButton(
-                    hdr, text="🗑️ Purgar hechas", width=100, height=24,
-                    font=ctk.CTkFont(size=10), fg_color=COLORS["red"],
+                    outer, text="🗑 Purgar completadas", width=130, height=24,
+                    font=font("small"), fg_color=COLORS["red"],
+                    text_color=COLORS["text_on_accent"],
                     command=self._purgar_completadas,
-                ).pack(side="right")
-            sf = ctk.CTkScrollableFrame(cell, fg_color="transparent")
-            sf.pack(fill="both", expand=True, padx=6, pady=6)
+                ).pack(anchor="e", padx=10, pady=(0, 4))
+            sf = ctk.CTkScrollableFrame(outer, fg_color="transparent")
+            sf.pack(fill="both", expand=True, padx=8, pady=(0, 8))
             self.matriz_lanes[key] = sf
 
         self.cal_main = ctk.CTkFrame(self.tab_cal, fg_color=COLORS["bg"])
@@ -114,7 +138,7 @@ class GestorTareasFrame(ctk.CTkFrame):
         self.cal_side_hdr.grid_propagate(False)
         self.cal_side_lbl = ctk.CTkLabel(
             self.cal_side_hdr, text="Selecciona un día",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=font("subtitle"), text_color=COLORS["text_on_accent"],
         )
         self.cal_side_lbl.place(relx=0.5, rely=0.5, anchor="center")
         self.cal_side_list = ctk.CTkScrollableFrame(self.cal_side, fg_color="transparent")
@@ -126,17 +150,88 @@ class GestorTareasFrame(ctk.CTkFrame):
         self.cal_add_btn.grid(row=2, column=0, sticky="ew", padx=12, pady=12)
         self._cal_selected_date: str | None = date.today().isoformat()
         self._cal_day_buttons: dict[str, ctk.CTkButton] = {}
+        self._style_tabs()
+        self._style_filters()
+        self.after(80, self._style_chrome)
+
+    def _style_chrome(self):
+        self._style_tabs()
+        self._style_filters()
+
+    def _style_tabs(self):
+        if not hasattr(self, "tabs"):
+            return
+        light = is_light_mode()
+        self.tabs.configure(
+            fg_color=COLORS["surface"],
+            segmented_button_fg_color=COLORS["surface_elevated"],
+            segmented_button_selected_color=COLORS["accent"] if not light else "#fca5a5",
+            segmented_button_selected_hover_color=COLORS["accent_hover"] if not light else "#f87171",
+            segmented_button_unselected_color=COLORS["tab_unselected"],
+            segmented_button_unselected_hover_color=COLORS["nav_hover"],
+            text_color=COLORS["text_on_accent"] if not light else COLORS["text"],
+        )
+
+    def _style_filters(self):
+        if not hasattr(self, "agrup_m"):
+            return
+        light = is_light_mode()
+        self.agrup_m.configure(
+            fg_color=COLORS["surface_elevated"],
+            selected_color=COLORS["accent"] if not light else "#fca5a5",
+            selected_hover_color=COLORS["accent_hover"] if not light else "#f87171",
+            unselected_color=COLORS["tab_unselected"],
+            unselected_hover_color=COLORS["nav_hover"],
+            text_color=COLORS["text_on_accent"] if not light else COLORS["text"],
+        )
+
+    def _active_tab(self) -> str:
+        return self.tabs.get() if hasattr(self, "tabs") else "Lista"
+
+    def _on_tab_change(self, *_args):
+        tareas = self._tareas_cache
+        if tareas is None:
+            tareas = db.get_tareas()
+            self._tareas_cache = tareas
+        tab = self._active_tab()
+        if tab == "Lista":
+            self._refresh_lista(tareas)
+        elif tab == "Matriz Foco":
+            self._refresh_matriz(tareas)
+        elif tab == "Calendario":
+            self._refresh_cal(tareas)
+            if self._cal_selected_date:
+                self._update_cal_side(self._cal_selected_date)
+
+    def on_new_day(self):
+        hoy = date.today()
+        self.cal_year = hoy.year
+        self.cal_month = hoy.month
+        self._cal_selected_date = hoy.isoformat()
+        self.refresh(all_tabs=True)
 
     def _set_agrup(self, val):
         self.agrup = val
-        self._refresh_lista()
+        tareas = self._tareas_cache or db.get_tareas()
+        self._refresh_lista(tareas)
 
-    def refresh(self):
+    def refresh(self, all_tabs: bool = False):
         db.auto_purga_completadas_diaria()
-        self._refresh_lista()
-        self._refresh_matriz()
-        self._refresh_cal()
-        if self._cal_selected_date:
+        tareas = db.get_tareas()
+        self._tareas_cache = tareas
+        if all_tabs:
+            self._refresh_lista(tareas)
+            self._refresh_matriz(tareas)
+            self._refresh_cal(tareas)
+        else:
+            tab = self._active_tab()
+            if tab == "Lista":
+                self._refresh_lista(tareas)
+            elif tab == "Matriz Foco":
+                self._refresh_matriz(tareas)
+            elif tab == "Calendario":
+                self._refresh_cal(tareas)
+        if self._cal_selected_date and (all_tabs or self._active_tab() == "Calendario"):
             self._update_cal_side(self._cal_selected_date)
 
     def _urgencia_color(self, fl: str | None) -> str:
@@ -154,10 +249,12 @@ class GestorTareasFrame(ctk.CTkFrame):
         except ValueError:
             return COLORS["text_sec"]
 
-    def _refresh_lista(self):
+    def _refresh_lista(self, tareas: list | None = None):
         for w in self.lista_scroll.winfo_children():
             w.destroy()
-        tareas = [t for t in db.get_tareas() if t["estado"] != "completada"]
+        if tareas is None:
+            tareas = db.get_tareas()
+        tareas = [t for t in tareas if t["estado"] != "completada"]
         hoy = date.today()
 
         if self.agrup == "Por Urgencia":
@@ -204,17 +301,29 @@ class GestorTareasFrame(ctk.CTkFrame):
         else:
             groups = {"Todas": tareas}
 
+        total = sum(len(v) for v in groups.values())
+        if not total:
+            empty = ctk.CTkFrame(self.lista_scroll, fg_color=COLORS["surface_elevated"], corner_radius=12)
+            empty.pack(fill="x", pady=24, padx=8)
+            lbl(empty, "Sin tareas pendientes", style="title").pack(padx=20, pady=(20, 6))
+            lbl(
+                empty,
+                "Pulsa «+ Nueva Tarea» para crear una o revisa el filtro activo.",
+                style="muted",
+            ).pack(padx=20, pady=(0, 20))
+            return
+
         for title, items in groups.items():
             if not items:
                 continue
-            ctk.CTkLabel(self.lista_scroll, text=title, font=ctk.CTkFont(size=15, weight="bold")).pack(anchor="w", pady=(12, 4))
+            lbl(self.lista_scroll, title, style="section").pack(anchor="w", pady=(12, 4))
             for t in items:
                 self._tarea_row(self.lista_scroll, t)
 
     def _tarea_row(self, parent, t: dict, compact: bool = False):
         vencida = t.get("fecha_limite") and t["fecha_limite"] < date.today().isoformat()
         completada = t.get("estado") == "completada"
-        bg = "#2a1515" if vencida else ("#1a2a1a" if completada else COLORS["surface_elevated"])
+        bg = COLORS["row_overdue"] if vencida else (COLORS["row_done"] if completada else COLORS["row_bg"])
         card = ctk.CTkFrame(parent, fg_color=bg, corner_radius=8, height=48 if compact else 52)
         card.pack(fill="x", pady=2)
         card.pack_propagate(False)
@@ -229,7 +338,8 @@ class GestorTareasFrame(ctk.CTkFrame):
         row1.pack(fill="x")
         ctk.CTkLabel(
             row1, text=t["titulo"],
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=font("subtitle"),
+            text_color=COLORS["text"],
             anchor="w",
         ).pack(side="left")
 
@@ -260,7 +370,8 @@ class GestorTareasFrame(ctk.CTkFrame):
         ctk.CTkButton(
             parent, text=text, width=32, height=28,
             fg_color=color, hover_color=color,
-            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=COLORS["text_on_accent"],
+            font=font("badge"),
             command=command,
         ).pack(side="left", padx=2)
 
@@ -286,45 +397,67 @@ class GestorTareasFrame(ctk.CTkFrame):
             return "despues"
         return "despues"
 
-    def _refresh_matriz(self):
-        for lane in self.matriz_lanes.values():
-            for w in lane.winfo_children():
-                w.destroy()
-        for t in db.get_tareas():
+    def _refresh_matriz(self, tareas: list | None = None):
+        lane_items: dict[str, list] = {k: [] for k in self.matriz_lanes}
+        if tareas is None:
+            tareas = db.get_tareas()
+        for t in tareas:
             if t.get("estado") == "completada":
                 continue
-            lane_key = self._clasificar_matriz(t)
-            self._matriz_card(self.matriz_lanes[lane_key], t)
+            lane_items[self._clasificar_matriz(t)].append(t)
+        for key, lane in self.matriz_lanes.items():
+            for w in lane.winfo_children():
+                w.destroy()
+            items = lane_items[key]
+            if key in self.matriz_counts:
+                self.matriz_counts[key].configure(text=str(len(items)))
+            if not items:
+                lbl(
+                    lane, "Sin tareas aquí",
+                    style="muted",
+                ).pack(pady=20, padx=8)
+                continue
+            for t in items:
+                self._matriz_card(lane, t)
 
     def _matriz_card(self, parent, t: dict):
         urg = self._urgencia_color(t.get("fecha_limite"))
+        curso_c = safe_color(t.get("curso_color"), COLORS["accent"])
         card = ctk.CTkFrame(
-            parent, fg_color=COLORS["surface"], corner_radius=10,
+            parent, fg_color=COLORS["surface"], corner_radius=12,
             border_width=2, border_color=urg,
         )
-        card.pack(fill="x", pady=4, padx=2)
-        top = ctk.CTkFrame(card, height=3, fg_color=safe_color(t.get("curso_color"), COLORS["accent"]))
-        top.pack(fill="x")
+        card.pack(fill="x", pady=5, padx=2)
+        stripe = ctk.CTkFrame(card, height=4, fg_color=curso_c, corner_radius=0)
+        stripe.pack(fill="x")
         body = ctk.CTkFrame(card, fg_color="transparent")
-        body.pack(fill="x", padx=8, pady=8)
+        body.pack(fill="x", padx=10, pady=8)
         ctk.CTkLabel(
-            body, text=t["titulo"], font=ctk.CTkFont(size=12, weight="bold"),
-            wraplength=200, anchor="w",
+            body, text=t["titulo"], font=font("subtitle"),
+            text_color=COLORS["text"], wraplength=220, anchor="w",
         ).pack(anchor="w")
         fl = t.get("fecha_limite") or "Sin fecha"
+        meta_row = ctk.CTkFrame(body, fg_color="transparent")
+        meta_row.pack(fill="x", pady=(4, 0))
         ctk.CTkLabel(
-            body, text=f"{PRIORIDAD_LABELS.get(t.get('prioridad','normal'), '')} · 📅 {fl}",
-            font=ctk.CTkFont(size=10), text_color=urg,
-        ).pack(anchor="w")
-        curso = t.get("curso_nombre") or "—"
-        ctk.CTkLabel(body, text=f"📚 {curso} · {t.get('duracion_min', 30)}m", text_color=COLORS["text_sec"], font=ctk.CTkFont(size=9)).pack(anchor="w")
-        bf = ctk.CTkFrame(card, fg_color="transparent")
-        bf.pack(fill="x", padx=6, pady=(0, 6))
+            meta_row, text=PRIORIDAD_LABELS.get(t.get("prioridad", "normal"), ""),
+            font=font("small"), text_color=urg,
+        ).pack(side="left")
+        ctk.CTkLabel(
+            meta_row, text=f"📅 {fl}",
+            font=font("small"), text_color=COLORS["text_sec"],
+        ).pack(side="left", padx=8)
+        ctk.CTkLabel(
+            body, text=f"📚 {t.get('curso_nombre') or '—'} · {t.get('duracion_min', 30)}m",
+            text_color=COLORS["text_sec"], font=font("small"), anchor="w",
+        ).pack(anchor="w", pady=(2, 0))
+        bf = ctk.CTkFrame(card, fg_color=COLORS["surface_elevated"], corner_radius=8)
+        bf.pack(fill="x", padx=8, pady=(0, 8))
         self._action_btn(bf, "✓", BTN_DONE, lambda task=t: self._done(task))
         self._action_btn(bf, "TB", BTN_TB, lambda task=t: self._to_tb(task))
         self._action_btn(bf, "✏", BTN_EDIT, lambda task=t: self._modal_tarea(task))
 
-    def _refresh_cal(self):
+    def _refresh_cal(self, tareas: list | None = None):
         for w in self.cal_body.winfo_children():
             w.destroy()
         for w in self.cal_week_strip.winfo_children():
@@ -333,10 +466,7 @@ class GestorTareasFrame(ctk.CTkFrame):
 
         if not self.cal_nav.winfo_children():
             ctk.CTkButton(self.cal_nav, text="◀", width=40, fg_color=COLORS["accent2"], command=self._cal_prev).pack(side="left")
-            self.cal_month_lbl = ctk.CTkLabel(
-                self.cal_nav, text="",
-                font=ctk.CTkFont(size=20, weight="bold"),
-            )
+            self.cal_month_lbl = lbl(self.cal_nav, "", style="title")
             self.cal_month_lbl.pack(side="left", expand=True)
             ctk.CTkButton(self.cal_nav, text="Hoy", width=56, fg_color=COLORS["accent"], command=self._cal_today).pack(side="left", padx=4)
             ctk.CTkButton(self.cal_nav, text="▶", width=40, fg_color=COLORS["accent2"], command=self._cal_next).pack(side="right")
@@ -345,7 +475,8 @@ class GestorTareasFrame(ctk.CTkFrame):
         # Franja semanal rápida
         hoy = date.today()
         lunes = hoy - timedelta(days=hoy.weekday())
-        tareas = db.get_tareas()
+        if tareas is None:
+            tareas = db.get_tareas()
         by_day: dict[str, list] = {}
         for t in tareas:
             if t.get("fecha_limite") and t["estado"] != "completada":
@@ -362,7 +493,8 @@ class GestorTareasFrame(ctk.CTkFrame):
                 txt += f"\n●{cnt}"
             ctk.CTkButton(
                 self.cal_week_strip, text=txt, width=72, height=64,
-                fg_color=fg, font=ctk.CTkFont(size=10, weight="bold"),
+                fg_color=fg, font=font("badge"),
+                text_color=COLORS["text_on_accent"] if fg in (COLORS["accent"], COLORS["accent2"]) else COLORS["text"],
                 command=lambda ds=d_str: self._cal_select(ds),
             ).pack(side="left", padx=2, pady=4)
 
@@ -378,7 +510,7 @@ class GestorTareasFrame(ctk.CTkFrame):
         dias_hdr = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
         for i, d in enumerate(dias_hdr):
             ctk.CTkLabel(
-                inner, text=d, font=ctk.CTkFont(size=11, weight="bold"),
+                inner, text=d, font=font("badge"),
                 text_color=COLORS["accent2"],
             ).grid(row=0, column=i, sticky="nsew", padx=2, pady=2)
 
@@ -399,21 +531,23 @@ class GestorTareasFrame(ctk.CTkFrame):
         hoy = date.today()
         self.cal_year, self.cal_month = hoy.year, hoy.month
         self._cal_select(hoy.isoformat())
-        self._refresh_cal()
+        tareas = self._tareas_cache or db.get_tareas()
+        self._refresh_cal(tareas)
 
     def _make_cal_day_btn(self, grid, day: int, d_str: str, cnt: int, tareas_dia: list, row: int, col: int) -> ctk.CTkButton:
         is_today = d_str == date.today().isoformat()
         is_sel = d_str == self._cal_selected_date
         if cnt >= 3:
-            bg = "#1a2a3d"
+            bg = COLORS["cal_busy_3"]
         elif cnt >= 1:
-            bg = "#152a20"
+            bg = COLORS["cal_busy_1"]
         else:
             bg = COLORS["surface"]
         if is_today:
             bg = COLORS["accent"]
         border = COLORS["accent2"] if is_sel else COLORS["border"]
         bw = 3 if is_sel else 1
+        txt_color = COLORS["text_on_accent"] if (is_today or bg in (COLORS["accent"], COLORS["accent2"])) else COLORS["text"]
 
         urgente = any(t.get("prioridad") == "urgente" for t in tareas_dia)
         dots = ""
@@ -423,8 +557,9 @@ class GestorTareasFrame(ctk.CTkFrame):
 
         btn = ctk.CTkButton(
             grid, text=f"{day}{dots}",
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=font("body"),
             fg_color=bg, hover_color=COLORS["accent2"],
+            text_color=txt_color,
             border_width=bw, border_color=border,
             height=62, corner_radius=10,
             command=lambda ds=d_str: self._cal_select(ds),
@@ -453,10 +588,9 @@ class GestorTareasFrame(ctk.CTkFrame):
         for t in pendientes:
             self._tarea_row(self.cal_side_list, t, compact=True)
         if completadas:
-            ctk.CTkLabel(
-                self.cal_side_list, text="Completadas",
-                font=ctk.CTkFont(size=11, weight="bold"),
-                text_color=COLORS["text_sec"],
+            lbl(
+                self.cal_side_list, "Completadas",
+                style="muted",
             ).pack(anchor="w", pady=(8, 2))
             for t in completadas:
                 self._tarea_row(self.cal_side_list, t, compact=True)
@@ -476,13 +610,15 @@ class GestorTareasFrame(ctk.CTkFrame):
         self.cal_month -= 1
         if self.cal_month < 1:
             self.cal_month, self.cal_year = 12, self.cal_year - 1
-        self._refresh_cal()
+        tareas = self._tareas_cache or db.get_tareas()
+        self._refresh_cal(tareas)
 
     def _cal_next(self):
         self.cal_month += 1
         if self.cal_month > 12:
             self.cal_month, self.cal_year = 1, self.cal_year + 1
-        self._refresh_cal()
+        tareas = self._tareas_cache or db.get_tareas()
+        self._refresh_cal(tareas)
 
     def _cal_select(self, d_str: str):
         self._cal_selected_date = d_str
@@ -547,26 +683,26 @@ class GestorTareasFrame(ctk.CTkFrame):
         sidebar.grid_propagate(False)
         ctk.CTkLabel(
             sidebar, text="TAREA",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=font("title"),
             text_color=COLORS["accent"],
         ).pack(pady=(24, 20))
 
         form = ctk.CTkScrollableFrame(root, fg_color=COLORS["surface"], corner_radius=12)
         form.grid(row=0, column=1, sticky="nsew", padx=(0, 12), pady=12)
 
-        ctk.CTkLabel(form, text="Título", font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w", padx=16, pady=(16, 2))
-        te = ctk.CTkEntry(form, width=480, height=36)
+        lbl(form, "Título", style="section").pack(anchor="w", padx=16, pady=(16, 2))
+        te = styled_entry(form, width=480, height=36)
         te.pack(padx=16, anchor="w")
         if tarea:
             te.insert(0, tarea["titulo"])
 
         cursos = db.get_cursos()
-        ctk.CTkLabel(form, text="Curso").pack(anchor="w", padx=16, pady=(8, 2))
-        curso_m = ctk.CTkOptionMenu(form, values=["Ninguno"] + [c["nombre"] for c in cursos], width=480)
+        lbl(form, "Curso").pack(anchor="w", padx=16, pady=(8, 2))
+        curso_m = styled_option(form, values=["Ninguno"] + [c["nombre"] for c in cursos], width=480)
         curso_m.pack(padx=16, anchor="w")
 
-        ctk.CTkLabel(form, text="Unidad").pack(anchor="w", padx=16, pady=(8, 2))
-        unidad_m = ctk.CTkOptionMenu(form, values=["Ninguna"], width=480)
+        lbl(form, "Unidad").pack(anchor="w", padx=16, pady=(8, 2))
+        unidad_m = styled_option(form, values=["Ninguna"], width=480)
         unidad_m.pack(padx=16, anchor="w")
 
         def upd_unidades(*_):
@@ -578,12 +714,12 @@ class GestorTareasFrame(ctk.CTkFrame):
 
         curso_m.configure(command=lambda v: upd_unidades())
 
-        ctk.CTkLabel(form, text="Tipo").pack(anchor="w", padx=16, pady=(8, 2))
-        tipo_m = ctk.CTkOptionMenu(form, values=[t.capitalize() for t in TIPOS_TAREA], width=480)
+        lbl(form, "Tipo").pack(anchor="w", padx=16, pady=(8, 2))
+        tipo_m = styled_option(form, values=[t.capitalize() for t in TIPOS_TAREA], width=480)
         tipo_m.pack(padx=16, anchor="w")
 
         fecha_val = [tarea.get("fecha_limite") if tarea else fecha_pre]
-        ctk.CTkLabel(form, text="Fecha límite").pack(anchor="w", padx=16, pady=(8, 2))
+        lbl(form, "Fecha límite").pack(anchor="w", padx=16, pady=(8, 2))
         fecha_lbl = ctk.CTkLabel(form, text=fecha_val[0] or "Sin fecha", text_color=COLORS["accent"])
         fecha_lbl.pack(anchor="w", padx=16)
         ctk.CTkButton(form, text="📅 Elegir fecha", width=140, command=lambda: DatePicker(
@@ -593,32 +729,33 @@ class GestorTareasFrame(ctk.CTkFrame):
         hora_sel = TimeSelector(form, "Hora límite")
         hora_sel.pack(anchor="w", padx=16, pady=4)
 
-        ctk.CTkLabel(form, text="Duración (min)").pack(anchor="w", padx=16, pady=(8, 2))
+        lbl(form, "Duración (min)").pack(anchor="w", padx=16, pady=(8, 2))
         dur_slider = ctk.CTkSlider(form, from_=15, to=240, number_of_steps=15, width=480)
         dur_slider.pack(padx=16, anchor="w")
         dur_slider.set(tarea.get("duracion_min", 30) if tarea else 30)
-        dur_lbl = ctk.CTkLabel(form, text="30 min")
+        dur_lbl = lbl(form, "30 min", style="muted")
         dur_lbl.pack(anchor="w", padx=16)
         dur_slider.configure(command=lambda v: dur_lbl.configure(text=f"{int(v)} min"))
 
-        ctk.CTkLabel(form, text="Prioridad").pack(anchor="w", padx=16, pady=(8, 2))
+        lbl(form, "Prioridad").pack(anchor="w", padx=16, pady=(8, 2))
         prior_f = ctk.CTkFrame(form, fg_color="transparent")
         prior_f.pack(padx=16, anchor="w")
         prior_val = [tarea.get("prioridad", "normal") if tarea else "normal"]
-        for p, lbl in PRIORIDAD_LABELS.items():
+        for p, prior_lbl in PRIORIDAD_LABELS.items():
             ctk.CTkButton(
-                prior_f, text=lbl, width=120, fg_color=PRIORIDAD_COLORS[p],
+                prior_f, text=prior_lbl, width=120, fg_color=PRIORIDAD_COLORS[p],
+                text_color=COLORS["text_on_accent"],
                 command=lambda pv=p: prior_val.__setitem__(0, pv),
             ).pack(side="left", padx=3)
 
         recurrente_var = ctk.BooleanVar(value=bool(tarea.get("recurrente")) if tarea else False)
-        ctk.CTkSwitch(form, text="Recurrente", variable=recurrente_var).pack(anchor="w", padx=16, pady=4)
+        styled_switch(form, text="Recurrente", variable=recurrente_var).pack(anchor="w", padx=16, pady=4)
 
-        ctk.CTkLabel(form, text="⏰ Recordatorio (alarma)", font=ctk.CTkFont(weight="bold")).pack(
+        lbl(form, "⏰ Recordatorio (alarma)", style="section").pack(
             anchor="w", padx=16, pady=(8, 2),
         )
         recordatorio_var = ctk.BooleanVar(value=bool(tarea.get("recordatorio")) if tarea else False)
-        ctk.CTkSwitch(form, text="Activar recordatorio", variable=recordatorio_var).pack(anchor="w", padx=16)
+        styled_switch(form, text="Activar recordatorio", variable=recordatorio_var).pack(anchor="w", padx=16)
         rec_hora = TimeSelector(form, "Hora del recordatorio")
         rec_hora.pack(anchor="w", padx=16, pady=4)
         if tarea and tarea.get("recordatorio_hora"):
@@ -630,8 +767,12 @@ class GestorTareasFrame(ctk.CTkFrame):
             text_color=COLORS["text_sec"], font=ctk.CTkFont(size=10),
         ).pack(anchor="w", padx=16, pady=(0, 4))
 
-        ctk.CTkLabel(form, text="Notas").pack(anchor="w", padx=16)
-        ne = ctk.CTkTextbox(form, width=480, height=80)
+        lbl(form, "Notas").pack(anchor="w", padx=16)
+        ne = ctk.CTkTextbox(
+            form, width=480, height=80,
+            fg_color=COLORS["input_bg"], text_color=COLORS["text"],
+            border_color=COLORS["border"], border_width=2,
+        )
         ne.pack(padx=16, pady=(4, 20), anchor="w")
 
         def save():
@@ -674,16 +815,65 @@ class GestorTareasFrame(ctk.CTkFrame):
         ctk.CTkButton(
             sidebar, text="✕\nCancelar", height=56, width=130,
             fg_color=COLORS["surface"], hover_color=COLORS["border"],
+            text_color=COLORS["text"],
             command=m.destroy,
         ).pack(pady=4, padx=12)
 
     def _sugerencia(self):
         self.ai.set_api_key(db.get_ai_api_key())
-        try:
-            tareas = [t for t in db.get_tareas() if t["estado"] != "completada"]
-            done, total, _ = db.progreso_dia(date.today().isoformat())
-            hrs = max(1, (total - done) * 0.5)
-            msg = self.ai.priorizar_tareas(tareas, hrs)
-            messagebox.showinfo("Sugerencia IA", msg[:2500])
-        except Exception as e:
-            messagebox.showerror("Error", str(e))
+        tareas = [t for t in db.get_tareas() if t["estado"] != "completada"]
+        done, total, _ = db.progreso_dia(date.today().isoformat())
+        hrs = max(1, (total - done) * 0.5)
+        local = self.ai.priorizar_tareas_local(tareas, hrs)
+
+        dlg = ctk.CTkToplevel(self)
+        dlg.title("Sugerencia IA")
+        dlg.geometry("560x420")
+        dlg.minsize(480, 320)
+        dlg.grab_set()
+        dlg.configure(fg_color=COLORS["bg"])
+        lbl(dlg, "🤖 Sugerencia de prioridades", style="title").pack(anchor="w", padx=16, pady=(16, 8))
+        box = ctk.CTkTextbox(
+            dlg, fg_color=COLORS["surface"], text_color=COLORS["text"],
+            border_color=COLORS["border"], border_width=1,
+        )
+        box.pack(fill="both", expand=True, padx=16, pady=(0, 8))
+        box.insert("1.0", local)
+        status = lbl(dlg, "", style="muted")
+        status.pack(anchor="w", padx=16, pady=(0, 4))
+
+        btn_row = ctk.CTkFrame(dlg, fg_color="transparent")
+        btn_row.pack(fill="x", padx=16, pady=(0, 16))
+
+        def close_dlg():
+            dlg.destroy()
+
+        ctk.CTkButton(btn_row, text="Cerrar", fg_color=COLORS["surface_elevated"], text_color=COLORS["text"], command=close_dlg).pack(side="right")
+
+        if not self.ai.api_key:
+            status.configure(text="Sugerencia instantánea (sin API). Configura DeepSeek para refinar con IA.")
+            return
+
+        status.configure(text="Refinando con DeepSeek en segundo plano…")
+        box.configure(state="disabled")
+
+        def on_ai(msg: str):
+            if not dlg.winfo_exists():
+                return
+            box.configure(state="normal")
+            box.delete("1.0", "end")
+            box.insert("1.0", local + "\n\n── Refinado con IA ──\n" + msg[:2000])
+            status.configure(text="Listo — combinado con sugerencia rápida local.")
+
+        def on_err(err: Exception):
+            if not dlg.winfo_exists():
+                return
+            box.configure(state="normal")
+            status.configure(text=f"IA no disponible: {err}. Se muestra solo la sugerencia rápida.")
+
+        self.ai.run_async(
+            dlg,
+            lambda: self.ai.priorizar_tareas(tareas, hrs),
+            on_ai,
+            on_err,
+        )

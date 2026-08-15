@@ -6,10 +6,36 @@ from datetime import date, datetime, timedelta
 import customtkinter as ctk
 
 from config import COLORS, DOMINIO_BG, DOMINIO_LABELS, DOMINIO_OPCIONES, Vida_ZONAS
+from modules.theme_engine import font, styled_option, lbl
+
 
 def safe_color(color: str | None, fallback: str = COLORS["accent"]) -> str:
     """Evita None en widgets CustomTkinter."""
     return color if color else fallback
+
+
+class GameCard(ctk.CTkFrame):
+    """Panel con borde estilo videojuego."""
+
+    def __init__(self, master, border_color=None, **kwargs):
+        kwargs.setdefault("corner_radius", 14)
+        kwargs.setdefault("border_width", 2)
+        kwargs.setdefault("border_color", border_color or COLORS.get("card_border", COLORS["accent"]))
+        kwargs.setdefault("fg_color", COLORS["surface"])
+        super().__init__(master, **kwargs)
+
+
+def game_button(parent, **kwargs) -> ctk.CTkButton:
+    kwargs.setdefault("border_width", 2)
+    kwargs.setdefault("border_color", COLORS.get("btn_border", COLORS["accent2"]))
+    kwargs.setdefault("corner_radius", 10)
+    kwargs.setdefault("font", font("game"))
+    fg = kwargs.get("fg_color")
+    if fg in (COLORS["surface"], COLORS["surface_elevated"], COLORS["bg"], "transparent", None):
+        kwargs.setdefault("text_color", COLORS["text"])
+    else:
+        kwargs.setdefault("text_color", COLORS.get("text_on_accent", "#ffffff"))
+    return ctk.CTkButton(parent, **kwargs)
 
 
 class PulseBorder(ctk.CTkFrame):
@@ -152,18 +178,31 @@ class DatePicker(ctk.CTkToplevel):
             ctk.CTkButton(
                 shortcuts, text=label, width=70, height=28,
                 fg_color=COLORS["surface_elevated"],
+                hover_color=COLORS["nav_hover"],
+                text_color=COLORS["text"],
+                border_width=1, border_color=COLORS["border"],
                 command=lambda d=delta: self._pick(date.today() + timedelta(days=d)),
             ).pack(side="left", padx=3)
 
         nav = ctk.CTkFrame(self, fg_color="transparent")
         nav.pack(fill="x", padx=10)
-        ctk.CTkButton(nav, text="◀", width=40, command=self._prev_month).pack(side="left")
+        ctk.CTkButton(
+            nav, text="◀", width=40,
+            fg_color=COLORS["accent2"], hover_color=COLORS["accent_hover"],
+            text_color=COLORS["text_on_accent"],
+            command=self._prev_month,
+        ).pack(side="left")
         self.month_label = ctk.CTkLabel(
             nav, text="",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=font("subtitle"), text_color=COLORS["text"],
         )
         self.month_label.pack(side="left", expand=True)
-        ctk.CTkButton(nav, text="▶", width=40, command=self._next_month).pack(side="right")
+        ctk.CTkButton(
+            nav, text="▶", width=40,
+            fg_color=COLORS["accent2"], hover_color=COLORS["accent_hover"],
+            text_color=COLORS["text_on_accent"],
+            command=self._next_month,
+        ).pack(side="right")
         self.grid_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.grid_frame.pack(fill="both", expand=True, padx=10, pady=10)
         self._render()
@@ -189,7 +228,10 @@ class DatePicker(ctk.CTkToplevel):
             text=self.current.strftime("%B %Y").capitalize()
         )
         for d in ["L", "M", "X", "J", "V", "S", "D"]:
-            ctk.CTkLabel(self.grid_frame, text=d, width=40).grid(row=0, column=["L","M","X","J","V","S","D"].index(d))
+            ctk.CTkLabel(
+                self.grid_frame, text=d, width=40,
+                font=font("badge"), text_color=COLORS["text_sec"],
+            ).grid(row=0, column=["L", "M", "X", "J", "V", "S", "D"].index(d))
         cal = calendar.Calendar(firstweekday=0)
         row = 1
         for week in cal.monthdayscalendar(self.current.year, self.current.month):
@@ -199,10 +241,17 @@ class DatePicker(ctk.CTkToplevel):
                     continue
                 d = date(self.current.year, self.current.month, day)
                 is_today = d == date.today()
-                fg = COLORS["accent"] if is_today else COLORS["surface_elevated"]
+                is_sel = self.current == d if hasattr(self, "_sel") else False
+                if is_today:
+                    fg, tc = COLORS["accent"], COLORS["text_on_accent"]
+                    hov = COLORS["accent_hover"]
+                else:
+                    fg, tc = COLORS["input_bg"], COLORS["text"]
+                    hov = COLORS["nav_hover"]
                 ctk.CTkButton(
                     self.grid_frame, text=str(day), width=40, height=36,
-                    fg_color=fg,
+                    fg_color=fg, hover_color=hov, text_color=tc,
+                    border_width=1, border_color=COLORS["border"],
                     command=lambda dd=d: self._pick(dd),
                 ).grid(row=row, column=col, padx=1, pady=1)
             row += 1
@@ -219,8 +268,8 @@ class TimeSelector(ctk.CTkFrame):
 
     def __init__(self, master, label: str = "Hora", **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
-        ctk.CTkLabel(self, text=label, text_color=COLORS["text_sec"]).pack(anchor="w")
-        self.menu = ctk.CTkOptionMenu(self, values=self.HORAS, width=120)
+        ctk.CTkLabel(self, text=label, text_color=COLORS["text_sec"], font=font("small")).pack(anchor="w")
+        self.menu = styled_option(self, values=self.HORAS, width=120)
         self.menu.pack(anchor="w", pady=4)
 
     def get(self) -> str:
@@ -270,6 +319,7 @@ class DominioSelector(ctk.CTkFrame):
                 self, text=label, height=36,
                 fg_color=bg,
                 hover_color=bg,
+                text_color=COLORS["text"],
                 border_width=2,
                 border_color=COLORS["green"] if key == valor else COLORS["border"],
                 command=lambda k=key: self._set(k),
@@ -285,6 +335,15 @@ class DominioSelector(ctk.CTkFrame):
                 border_width=3 if k == key else 1,
             )
         self._on_change(key)
+
+    def set_valor(self, key: str):
+        """Actualiza visualmente sin disparar callback."""
+        self._active = key
+        for k, btn in self._btns.items():
+            btn.configure(
+                border_color=COLORS["green"] if k == key else COLORS["border"],
+                border_width=3 if k == key else 1,
+            )
 
 
 def hora_saludo() -> str:
@@ -320,7 +379,8 @@ class DominioStatusWidget(ctk.CTkFrame):
 
         self.main_label = ctk.CTkLabel(
             self, text="0 de 0 temas dominados",
-            font=ctk.CTkFont(size=15, weight="bold"),
+            font=font("subtitle"),
+            text_color=COLORS["text"],
             anchor="w",
         )
         self.main_label.pack(anchor="w", pady=(6, 2))
@@ -388,50 +448,62 @@ class TimeBlockPicker(ctk.CTkToplevel):
         self._checks: list[tuple[ctk.BooleanVar, dict]] = []
 
         self.title("Colocar en TimeBlocking")
-        self.geometry("480x560")
-        self.resizable(False, False)
+        self.geometry("500x620")
+        self.minsize(480, 520)
+        self.resizable(True, True)
         self.configure(fg_color=COLORS["surface"])
         self.transient(master.winfo_toplevel())
         self.grab_set()
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(2, weight=1)
         self._build()
         self._load_slots()
 
     def _build(self):
+        hdr = ctk.CTkFrame(self, fg_color="transparent")
+        hdr.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 4))
         ctk.CTkLabel(
-            self, text="⏰ ASIGNAR A BLOQUES",
-            font=ctk.CTkFont(size=16, weight="bold"),
-            text_color=COLORS["accent"],
-        ).pack(anchor="w", padx=16, pady=(14, 4))
+            hdr, text="⏰ ASIGNAR A BLOQUES",
+            font=font("subtitle"), text_color=COLORS["accent"],
+        ).pack(anchor="w")
         ctk.CTkLabel(
-            self, text=self.titulo, font=ctk.CTkFont(size=13, weight="bold"),
-            wraplength=440, justify="left",
-        ).pack(anchor="w", padx=16, pady=(0, 8))
+            hdr, text=self.titulo, font=font("body"),
+            wraplength=440, justify="left", anchor="w",
+            text_color=COLORS["text"],
+        ).pack(anchor="w", pady=(4, 0))
 
         df = ctk.CTkFrame(self, fg_color="transparent")
-        df.pack(fill="x", padx=16, pady=4)
-        self.fecha_lbl = ctk.CTkLabel(df, text="", text_color=COLORS["accent"])
+        df.grid(row=1, column=0, sticky="ew", padx=16, pady=4)
+        self.fecha_lbl = ctk.CTkLabel(df, text="", text_color=COLORS["accent"], font=font("small"))
         self.fecha_lbl.pack(side="left")
-        ctk.CTkButton(
-            df, text="📅 Cambiar día", width=110, height=28,
+        game_button(
+            df, text="📅 Cambiar día", width=120, height=30,
             fg_color=COLORS["surface_elevated"],
             command=self._pick_date,
         ).pack(side="right")
 
+        mid = ctk.CTkFrame(self, fg_color="transparent")
+        mid.grid(row=2, column=0, sticky="nsew", padx=16, pady=4)
+        mid.grid_columnconfigure(0, weight=1)
+        mid.grid_rowconfigure(1, weight=1)
         ctk.CTkLabel(
-            self, text="Marca uno o más bloques (libres u ocupados):",
-            text_color=COLORS["text_sec"], font=ctk.CTkFont(size=11),
-        ).pack(anchor="w", padx=16, pady=(8, 4))
+            mid, text="Marca uno o más bloques (libres u ocupados):",
+            text_color=COLORS["text_sec"], font=font("small"),
+        ).grid(row=0, column=0, sticky="w", pady=(0, 4))
 
-        self.slots_scroll = ctk.CTkScrollableFrame(self, fg_color=COLORS["bg"], height=340)
-        self.slots_scroll.pack(fill="both", expand=True, padx=16, pady=4)
+        self.slots_scroll = ctk.CTkScrollableFrame(mid, fg_color=COLORS["bg"], height=380)
+        self.slots_scroll.grid(row=1, column=0, sticky="nsew")
 
-        bf = ctk.CTkFrame(self, fg_color="transparent")
-        bf.pack(fill="x", padx=16, pady=12)
-        ctk.CTkButton(
+        bf = ctk.CTkFrame(self, fg_color=COLORS["surface_elevated"], corner_radius=10)
+        bf.grid(row=3, column=0, sticky="ew", padx=16, pady=(8, 14))
+        game_button(
             bf, text="✅ Colocar en bloques", fg_color=COLORS["green"],
             command=self._assign,
-        ).pack(side="left", padx=4)
-        ctk.CTkButton(bf, text="Cancelar", fg_color=COLORS["surface_elevated"], command=self.destroy).pack(side="left", padx=4)
+        ).pack(side="left", padx=12, pady=10)
+        game_button(
+            bf, text="Cancelar", fg_color=COLORS["surface_elevated"],
+            command=self.destroy,
+        ).pack(side="left", padx=4, pady=10)
 
     def _pick_date(self):
         import database as db

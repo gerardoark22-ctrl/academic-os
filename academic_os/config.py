@@ -6,19 +6,42 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).parent
 
-if getattr(sys, "frozen", False):
-    # .exe: datos junto al ejecutable (no en carpeta temporal)
-    DATA_DIR = Path(sys.executable).parent
-else:
-    _data = os.environ.get("ACADEMIC_OS_DATA") or os.environ.get("DATA_DIR")
-    DATA_DIR = Path(_data) if _data else BASE_DIR
+# Carga academic_os/.env pase lo que pase: config.py lo importa todo el mundo
+# (escritorio, web, Docker), así ningún punto de arranque se queda sin claves.
+try:
+    from env_loader import load_env_file
 
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+    load_env_file()
+except ImportError:  # arranques que no tienen academic_os/ en sys.path
+    pass
+
+
+def resolve_data_dir() -> Path:
+    """Ubicación única y permanente de datos (exe y python usan la misma)."""
+    custom = os.environ.get("ACADEMIC_OS_DATA") or os.environ.get("DATA_DIR")
+    if custom:
+        return Path(custom)
+    if sys.platform == "win32":
+        root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:
+        root = Path.home() / ".local" / "share"
+    return root / "AcademicOS"
+
+
+DATA_DIR = resolve_data_dir()
 DB_PATH = DATA_DIR / "academic_os.db"
+BACKUP_DIR = DATA_DIR / "backups"
 ASSETS_DIR = BASE_DIR / "assets"
 THEME_PATH = ASSETS_DIR / "theme.json"
 DB_VERSION = "2.0"
 
+# Rutas antiguas (migración automática al arrancar)
+LEGACY_DB_CANDIDATES = [
+    BASE_DIR / "academic_os.db",
+    BASE_DIR.parent / "dist" / "academic_os.db",
+]
+if getattr(sys, "frozen", False):
+    LEGACY_DB_CANDIDATES.insert(0, Path(sys.executable).parent / "academic_os.db")
 # Paleta Spotify + Gamer/HUD
 COLORS = {
     "bg": "#0d0d1a",
@@ -94,13 +117,16 @@ CURSO_COLORES_PALETA = [
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_MODEL = "deepseek-chat"
-# Clave integrada — cámbiala en ⚙️ Configuración si lo necesitas
-DEEPSEEK_BUILTIN_KEY = "sk-720a12da357749ef974c4aa3f79169a8"
+# Clave de DeepSeek: se lee de academic_os/.env (ignorado por git) o de una
+# variable de entorno. NUNCA la escribas acá: este archivo se sube a GitHub.
+# También puedes cargarla desde ⚙️ Configuración dentro de la app.
+DEEPSEEK_BUILTIN_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 
 CONFIG_DEFAULTS = {
     "deepseek_api_key": "",
     "openai_api_key": "",
     "nombre_usuario": "Estudiante",
+    "tema_claro": "0",
     "modo_examen_inminente": "1",
     "notif_hora_tarde": "14:00",
     "notif_hora_noche": "21:00",

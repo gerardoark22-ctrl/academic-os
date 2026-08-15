@@ -1,6 +1,5 @@
 """Riesgo y Alarmas — Academic OS v2."""
 
-import threading
 from datetime import date, datetime
 
 import customtkinter as ctk
@@ -9,13 +8,8 @@ from tkinter import messagebox
 import database as db
 from ai.openai_client import AcademicAI
 from config import COLORS, PRIORIDAD_LABELS, SEMAFORO_COLORS, SEMAFORO_EMOJI
-from modules.components import PulseBorder, safe_color
-
-try:
-    from plyer import notification
-    _PLYER = True
-except ImportError:
-    _PLYER = False
+from modules.components import MetricCard, PulseBorder, safe_color
+from modules.theme_engine import font, lbl
 
 DEFCON = [
     (0, 25, "🟢 SEGURO", COLORS["green"], "Riesgo bajo — mantén el ritmo"),
@@ -31,10 +25,8 @@ class RiesgoFrame(ctk.CTkFrame):
         self.app = app
         self.ai = AcademicAI(db.get_ai_api_key())
         self._semaforos: dict[int, str] = {}
-        self._notified: set[str] = set()
         self._build()
         self.refresh()
-        self._schedule_checks()
 
     def _build(self):
         scroll = ctk.CTkScrollableFrame(self, fg_color=COLORS["bg"])
@@ -42,14 +34,21 @@ class RiesgoFrame(ctk.CTkFrame):
         self._scroll = scroll
 
         ctk.CTkLabel(
-            scroll, text="🚨 CENTRO DE RIESGO",
+            scroll, text="⚡ CENTRO DE RENDIMIENTO",
             font=ctk.CTkFont(size=28, weight="bold"),
-            text_color=COLORS["red"],
+            text_color=COLORS["accent"],
         ).pack(anchor="w", pady=(0, 4))
         ctk.CTkLabel(
-            scroll, text="Monitoreo en tiempo real de exámenes, tareas y dominio",
+            scroll,
+            text="Tu ejecución diaria: bloques, tareas agendadas y acción real",
             text_color=COLORS["text_sec"], font=ctk.CTkFont(size=12),
         ).pack(anchor="w", pady=(0, 12))
+
+        self.perf_banner = ctk.CTkFrame(scroll, fg_color=COLORS["surface"], corner_radius=16)
+        self.perf_banner.pack(fill="x", pady=8)
+
+        self.perf_actions = ctk.CTkFrame(scroll, fg_color="transparent")
+        self.perf_actions.pack(fill="x", pady=(0, 8))
 
         self.alert_banner = ctk.CTkFrame(scroll, fg_color=COLORS["surface"], corner_radius=16)
         self.alert_banner.pack(fill="x", pady=8)
@@ -58,28 +57,91 @@ class RiesgoFrame(ctk.CTkFrame):
         self.threat_box.pack(fill="x", pady=8)
         self.threat_box.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
-        ctk.CTkLabel(
-            scroll, text="⏳ CUENTA REGRESIVA — EXÁMENES",
-            font=ctk.CTkFont(size=16, weight="bold"),
-        ).pack(anchor="w", pady=(12, 8))
+        lbl(scroll, "⏳ CUENTA REGRESIVA — EXÁMENES", style="section").pack(anchor="w", pady=(12, 8))
         self.exam_scroll = ctk.CTkScrollableFrame(scroll, fg_color="transparent", orientation="horizontal", height=200)
         self.exam_scroll.pack(fill="x", pady=(0, 8))
 
-        ctk.CTkLabel(
-            scroll, text="🔥 AMENAZAS ACTIVAS",
-            font=ctk.CTkFont(size=16, weight="bold"),
-        ).pack(anchor="w", pady=(12, 8))
+        lbl(scroll, "📉 PRESIÓN ACADÉMICA", style="section").pack(anchor="w", pady=(12, 8))
         self.amenazas_box = ctk.CTkFrame(scroll, fg_color="transparent")
         self.amenazas_box.pack(fill="x")
 
-        ctk.CTkLabel(
-            scroll, text="📚 ESTADO POR CURSO",
-            font=ctk.CTkFont(size=16, weight="bold"),
-        ).pack(anchor="w", pady=(16, 8))
+        lbl(scroll, "📚 ESTADO POR CURSO", style="section").pack(anchor="w", pady=(16, 8))
         self.cursos_box = ctk.CTkFrame(scroll, fg_color="transparent")
         self.cursos_box.pack(fill="x")
 
+    def on_new_day(self):
+        today = date.today().isoformat()
+        self._notified = {k for k in self._notified if today in k}
+        self.refresh()
+
     def refresh(self):
+        rend = db.get_rendimiento_hoy()
+        titulo, msg, color_key = db.mensaje_rendimiento(rend)
+        color = COLORS.get(color_key, COLORS["accent"])
+
+        for w in self.perf_banner.winfo_children():
+            w.destroy()
+        critico = rend.get("inactivo_4h") or rend.get("inactivo") or rend["score"] < 35
+        inner_cls = PulseBorder if critico else ctk.CTkFrame
+        inner = inner_cls(
+            self.perf_banner, fg_color=COLORS["surface_elevated"],
+            corner_radius=14, border_width=3 if critico else 2, border_color=color,
+        )
+        inner.pack(fill="x", padx=4, pady=4)
+        top = ctk.CTkFrame(inner, fg_color="transparent")
+        top.pack(fill="x", padx=18, pady=(14, 6))
+        ctk.CTkLabel(
+            top, text=titulo, font=font("title"), text_color=color,
+        ).pack(side="left")
+        ctk.CTkLabel(
+            top, text=f"{rend['score']}/100",
+            font=ctk.CTkFont(size=40, weight="bold"), text_color=color,
+        ).pack(side="right")
+        ctk.CTkLabel(
+            inner, text=msg, text_color=COLORS["text"],
+            wraplength=900, justify="left", font=font("body"),
+        ).pack(anchor="w", padx=18, pady=(0, 8))
+        metrics = ctk.CTkFrame(inner, fg_color="transparent")
+        metrics.pack(fill="x", padx=18, pady=(0, 14))
+        for label, val in [
+            (f"⏰ TB {rend['bloques_done']}/{rend['bloques_total']}", f"{int(rend['pct_bloques'])}%"),
+            (f"Score TB", f"{rend.get('score_tb', 0)}/{rend.get('max_score_tb', 85)}"),
+            (f"Horas sin bloque", f"{rend.get('horas_inactivas', 0):.1f}h"),
+            (f"Tareas hoy", f"{rend['tareas_done']}/{rend['tareas_done'] + rend['tareas_pend_hoy']}"),
+        ]:
+            box = ctk.CTkFrame(metrics, fg_color=COLORS["surface"], corner_radius=10)
+            box.pack(side="left", padx=4, expand=True, fill="x")
+            ctk.CTkLabel(box, text=label, font=font("small"), text_color=COLORS["text_sec"]).pack(pady=(8, 0))
+            ctk.CTkLabel(box, text=val, font=font("subtitle"), text_color=COLORS["text"]).pack(pady=(0, 8))
+
+        for w in self.perf_actions.winfo_children():
+            w.destroy()
+        ctk.CTkButton(
+            self.perf_actions, text="⏰ Abrir TimeBlocking",
+            fg_color=COLORS["accent"], text_color=COLORS["text_on_accent"],
+            height=40, command=lambda: self.app.navigate("timeblocking"),
+        ).pack(side="left", padx=4, expand=True, fill="x")
+        ctk.CTkButton(
+            self.perf_actions, text="📋 Agendar tareas hoy",
+            fg_color=COLORS["accent2"], text_color=COLORS["text_on_accent"],
+            height=40, command=lambda: self.app.navigate("gestor_tareas"),
+        ).pack(side="left", padx=4, expand=True, fill="x")
+        if rend.get("inactivo_4h") or rend.get("inactivo"):
+            ctk.CTkButton(
+                self.perf_actions,
+                text=f"💀 {rend['horas_inactivas']:.0f}h sin ejecutar — IR A TB",
+                fg_color=COLORS["red"], height=44,
+                font=font("subtitle"),
+                command=lambda: self.app.navigate("timeblocking"),
+            ).pack(side="left", padx=4, expand=True, fill="x")
+        elif rend["sin_agendar_hoy"] > 0:
+            ctk.CTkButton(
+                self.perf_actions,
+                text=f"🚨 {rend['sin_agendar_hoy']} sin bloque",
+                fg_color=COLORS["red"], height=40,
+                command=lambda: self.app.navigate("timeblocking"),
+            ).pack(side="left", padx=4, expand=True, fill="x")
+
         res = db.get_resumen_riesgo()
         nivel = res["nivel"]
 
@@ -182,11 +244,11 @@ class RiesgoFrame(ctk.CTkFrame):
         row.pack(fill="x", padx=12, pady=10)
         ctk.CTkLabel(
             row, text=badge, fg_color=color, corner_radius=6,
-            font=ctk.CTkFont(size=10, weight="bold"), width=90,
+            font=font("badge"), text_color=COLORS["text_on_accent"], width=90,
         ).pack(side="left")
         body = ctk.CTkFrame(row, fg_color="transparent")
         body.pack(side="left", fill="x", expand=True, padx=10)
-        ctk.CTkLabel(body, text=titulo, font=ctk.CTkFont(weight="bold"), anchor="w").pack(anchor="w")
+        ctk.CTkLabel(body, text=titulo, font=font("subtitle"), text_color=COLORS["text"], anchor="w").pack(anchor="w")
         ctk.CTkLabel(body, text=sub, text_color=COLORS["text_sec"], font=ctk.CTkFont(size=11)).pack(anchor="w")
 
     def _exam_countdown(self, ex: dict):
@@ -216,7 +278,7 @@ class RiesgoFrame(ctk.CTkFrame):
         bar = ctk.CTkProgressBar(card, width=170, progress_color=safe_color(ex.get("curso_color"), COLORS["accent"]))
         bar.pack(padx=12, pady=6)
         bar.set(ex["avance"])
-        ctk.CTkLabel(card, text=f"{pct}% dominado", font=ctk.CTkFont(size=10)).pack(pady=(0, 10))
+        ctk.CTkLabel(card, text=f"{pct}% dominado", font=font("small"), text_color=COLORS["text_sec"]).pack(pady=(0, 10))
         if critico:
             ctk.CTkLabel(
                 card, text="⚠️ PELIGRO CERCANO",
@@ -257,8 +319,8 @@ class RiesgoFrame(ctk.CTkFrame):
         left.pack(side="left")
         circ = ctk.CTkFrame(left, width=80, height=80, corner_radius=40, fg_color=SEMAFORO_COLORS.get(worst_sem, COLORS["green"]))
         circ.pack()
-        ctk.CTkLabel(circ, text=self._estado_label(worst_sem), font=ctk.CTkFont(size=9, weight="bold")).place(relx=0.5, rely=0.5, anchor="center")
-        ctk.CTkLabel(left, text=f"{prox_dias if prox_dias < 999 else '—'} días", font=ctk.CTkFont(size=28, weight="bold")).pack(pady=4)
+        ctk.CTkLabel(circ, text=self._estado_label(worst_sem), font=font("badge"), text_color=COLORS["text_on_accent"]).place(relx=0.5, rely=0.5, anchor="center")
+        ctk.CTkLabel(left, text=f"{prox_dias if prox_dias < 999 else '—'} días", font=font("title"), text_color=COLORS["text"]).pack(pady=4)
 
         right = ctk.CTkFrame(row, fg_color="transparent")
         right.pack(side="left", fill="x", expand=True, padx=16)
@@ -294,78 +356,52 @@ class RiesgoFrame(ctk.CTkFrame):
         m.title("Plan de Rescate")
         m.geometry("420x300")
         m.grab_set()
-        ctk.CTkLabel(m, text=f"¿Cuántas horas tienes para {curso['nombre']}?").pack(pady=20)
+        lbl(m, f"¿Cuántas horas tienes para {curso['nombre']}?").pack(pady=20)
         he = ctk.CTkEntry(m, width=200, placeholder_text="Ej: 6")
         he.pack()
         result = ctk.CTkTextbox(m, width=380, height=120)
         result.pack(padx=20, pady=12)
+        gen_btn = ctk.CTkButton(m, text="Generar con DeepSeek")
+        gen_btn.pack(pady=8)
 
         def gen():
-            self.ai.set_api_key(db.get_ai_api_key())
+            if getattr(m, "_gen_busy", False):
+                return
             try:
+                horas = float(he.get())
+            except ValueError:
+                result.delete("1.0", "end")
+                result.insert("1.0", "⚠️ Indica un número válido de horas (ej: 6)")
+                return
+            self.ai.set_api_key(db.get_ai_api_key())
+            if not self.ai.api_key:
+                result.delete("1.0", "end")
+                result.insert("1.0", "⚠️ Configura tu API Key de DeepSeek en ⚙️ Configuración")
+                return
+            m._gen_busy = True
+            gen_btn.configure(state="disabled", text="⏳ Generando…")
+            result.delete("1.0", "end")
+            result.insert("1.0", "⏳ Generando plan de rescate…")
+
+            def work():
                 temas = [t for t in db.get_temas_curso(curso["id"]) if t["dominio"] != "lo_tengo"]
-                plan = self.ai.generar_plan_rescate(curso, float(he.get()), temas)
+                return self.ai.generar_plan_rescate(curso, horas, temas)
+
+            def _done():
+                m._gen_busy = False
+                if gen_btn.winfo_exists():
+                    gen_btn.configure(state="normal", text="Generar con DeepSeek")
+
+            def on_ok(plan):
+                _done()
                 result.delete("1.0", "end")
                 result.insert("1.0", plan)
-            except Exception as e:
-                result.insert("1.0", str(e))
 
-        ctk.CTkButton(m, text="Generar con DeepSeek", command=gen).pack(pady=8)
+            def on_err(err: Exception):
+                _done()
+                result.delete("1.0", "end")
+                result.insert("1.0", f"⚠️ {err}")
 
-    def _notify(self, title: str, msg: str):
-        if not _PLYER:
-            return
-        try:
-            notification.notify(title=title, message=msg, app_name="Academic OS", timeout=12)
-        except Exception:
-            pass
+            self.ai.run_async(m, work, on_ok, on_err)
 
-    def _schedule_checks(self):
-        self._check_alerts()
-        self._check_scheduled_notifs()
-        self.after(60000, self._schedule_checks)
-
-    def _check_scheduled_notifs(self):
-        now = datetime.now()
-        key = now.strftime("%Y-%m-%d %H:%M")[:16]
-        tarde = db.get_config("notif_hora_tarde", "14:00")[:5]
-        noche = db.get_config("notif_hora_noche", "21:00")[:5]
-        hm = now.strftime("%H:%M")
-
-        if hm == tarde and f"tarde_{key}" not in self._notified:
-            self._notified.add(f"tarde_{key}")
-            threading.Thread(target=self._notif_tarde, daemon=True).start()
-        if hm == noche and f"noche_{key}" not in self._notified:
-            self._notified.add(f"noche_{key}")
-            threading.Thread(target=self._notif_noche, daemon=True).start()
-
-    def _notif_tarde(self):
-        b = db.get_bloque_actual()
-        bloque = b.get("titulo", "Libre") if b else "Sin bloque"
-        n = db.contar_tareas_pendientes()
-        self._notify("🎯 Academic OS — Tarde", f"Tu bloque: {bloque}. {n} tareas pendientes hoy.")
-
-    def _notif_noche(self):
-        done, total, pct = db.progreso_dia(date.today().isoformat())
-        examenes = db.get_examenes_proximos()
-        crit = examenes[0]["curso_nombre"] if examenes else "—"
-        self._notify("📊 Academic OS — Resumen", f"Completaste {int(pct)}% bloques. Mañana: {crit}")
-
-    def _check_alerts(self):
-        for t in db.get_recordatorios_activos():
-            k = f"rec_{t['id']}_{date.today()}_{datetime.now().strftime('%H:%M')}"
-            if k not in self._notified:
-                self._notified.add(k)
-                self._notify("⏰ Recordatorio de tarea", t["titulo"])
-        for t in db.get_tareas_vencidas():
-            k = f"vencida_{t['id']}_{date.today()}"
-            if k not in self._notified:
-                self._notified.add(k)
-                self._notify("🚨 Tarea vencida", t["titulo"])
-        for ex in db.get_examenes_proximos():
-            dias = ex.get("dias_restantes")
-            if dias is not None and dias <= 7:
-                k = f"exam_{ex['id']}_{date.today()}"
-                if k not in self._notified:
-                    self._notified.add(k)
-                    self._notify("⚠️ Examen próximo", f"{ex['curso_nombre']} en {dias} días — {int(ex['avance']*100)}% listo")
+        gen_btn.configure(command=gen)

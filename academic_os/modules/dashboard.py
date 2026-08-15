@@ -9,6 +9,8 @@ import database as db
 from ai.openai_client import AcademicAI
 from config import COLORS, MOTIVACION, PRIORIDAD_LABELS, SEMAFORO_COLORS
 from modules.components import GlowFrame, DominioStatusWidget, PulseBorder, hora_saludo, safe_color
+from modules.examen_mode import get_plan_foco_hoy, is_active as exam_mode_active
+from modules.theme_engine import font, lbl
 
 
 class DashboardFrame(ctk.CTkFrame):
@@ -26,7 +28,7 @@ class DashboardFrame(ctk.CTkFrame):
 
         self.greeting = ctk.CTkLabel(
             self.scroll, text="",
-            font=ctk.CTkFont(size=30, weight="bold"),
+            font=font("display"),
             text_color=COLORS["text"],
         )
         self.greeting.pack(anchor="w")
@@ -39,10 +41,27 @@ class DashboardFrame(ctk.CTkFrame):
         )
         self.motiv_lbl.pack(anchor="w", pady=(0, 16))
 
+        self.exam_focus = ctk.CTkFrame(
+            self.scroll, fg_color=COLORS["surface_elevated"],
+            corner_radius=14, border_width=2, border_color=COLORS["red"],
+        )
+        self.exam_focus.pack(fill="x", pady=(0, 12))
+        ctk.CTkLabel(
+            self.exam_focus, text="🎯 PLAN DE FOCO — EXAMEN INMINENTE",
+            font=font("subtitle"), text_color=COLORS["red"],
+        ).pack(anchor="w", padx=14, pady=(10, 4))
+        self.exam_focus_txt = ctk.CTkLabel(
+            self.exam_focus, text="", justify="left", anchor="w",
+            font=font("body"), text_color=COLORS["text_sec"], wraplength=900,
+        )
+        self.exam_focus_txt.pack(anchor="w", padx=14, pady=(0, 12))
+        self.exam_focus.pack_forget()
+
         life_frame = ctk.CTkFrame(
             self.scroll, fg_color=COLORS["surface"],
             corner_radius=16, border_width=1, border_color=COLORS["border"],
         )
+        self.life_frame = life_frame
         life_frame.pack(fill="x", pady=(0, 16))
         ctk.CTkLabel(
             life_frame, text="📊 TU PREPARACIÓN ACADÉMICA",
@@ -52,10 +71,7 @@ class DashboardFrame(ctk.CTkFrame):
         self.life_bar = DominioStatusWidget(life_frame)
         self.life_bar.pack(fill="x", padx=16, pady=(8, 16))
 
-        ctk.CTkLabel(
-            self.scroll, text="📅 PRÓXIMOS EXÁmenes",
-            font=ctk.CTkFont(size=16, weight="bold"),
-        ).pack(anchor="w", pady=(0, 8))
+        lbl(self.scroll, "📅 PRÓXIMOS EXÁMENES", style="section").pack(anchor="w", pady=(0, 8))
         self.exam_scroll = ctk.CTkScrollableFrame(
             self.scroll, fg_color="transparent", orientation="horizontal", height=180,
         )
@@ -67,19 +83,13 @@ class DashboardFrame(ctk.CTkFrame):
 
         left = ctk.CTkFrame(cols, fg_color=COLORS["surface"], corner_radius=16)
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        ctk.CTkLabel(
-            left, text="⚡ MISIONES DE HOY",
-            font=ctk.CTkFont(size=15, weight="bold"),
-        ).pack(anchor="w", padx=14, pady=(14, 8))
+        lbl(left, "⚡ MISIONES DE HOY", style="section").pack(anchor="w", padx=14, pady=(14, 8))
         self.misiones_box = ctk.CTkFrame(left, fg_color="transparent")
         self.misiones_box.pack(fill="both", expand=True, padx=10, pady=(0, 14))
 
         right = ctk.CTkFrame(cols, fg_color=COLORS["surface"], corner_radius=16)
         right.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        ctk.CTkLabel(
-            right, text="⏰ BLOQUES DE HOY",
-            font=ctk.CTkFont(size=15, weight="bold"),
-        ).pack(anchor="w", padx=14, pady=(14, 8))
+        lbl(right, "⏰ BLOQUES DE HOY", style="section").pack(anchor="w", padx=14, pady=(14, 8))
         self.bloques_box = ctk.CTkFrame(right, fg_color="transparent")
         self.bloques_box.pack(fill="both", expand=True, padx=10)
         self.prog_bloques = ctk.CTkProgressBar(right, height=10)
@@ -138,6 +148,8 @@ class DashboardFrame(ctk.CTkFrame):
         for w in self.misiones_box.winfo_children():
             w.destroy()
         misiones = db.get_misiones_hoy()
+        if exam_mode_active():
+            misiones = [m for m in misiones if m.get("prioridad") in ("urgente", "importante")]
         if not misiones:
             ctk.CTkLabel(
                 self.misiones_box,
@@ -146,6 +158,14 @@ class DashboardFrame(ctk.CTkFrame):
             ).pack(anchor="w", pady=8)
         for m in misiones:
             self._mision_card(m)
+
+        if exam_mode_active():
+            plan = "\n".join(f"• {a}" for a in get_plan_foco_hoy())
+            self.exam_focus_txt.configure(text=plan)
+            if not self.exam_focus.winfo_ismapped():
+                self.exam_focus.pack(fill="x", pady=(0, 12), before=self.life_frame)
+        else:
+            self.exam_focus.pack_forget()
 
         for w in self.bloques_box.winfo_children():
             w.destroy()
@@ -162,7 +182,7 @@ class DashboardFrame(ctk.CTkFrame):
             ctk.CTkLabel(
                 parent,
                 text=f"{icon} {b['hora_inicio'][:5]} — {b.get('titulo', 'Bloque')}",
-                text_color=color,
+                text_color=COLORS["text"], font=font("body"),
             ).pack(anchor="w", padx=10, pady=6)
         done, total, pct = db.progreso_dia(date.today().isoformat())
         self.prog_bloques.set(pct / 100 if total else 0)
@@ -195,28 +215,33 @@ class DashboardFrame(ctk.CTkFrame):
         bar = ctk.CTkProgressBar(card, width=180, progress_color=safe_color(ex.get("curso_color"), COLORS["accent"]))
         bar.pack(padx=12, pady=6)
         bar.set(ex["avance"])
-        ctk.CTkLabel(card, text=f"{pct}% dominado", font=ctk.CTkFont(size=10)).pack(pady=(0, 10))
+        ctk.CTkLabel(card, text=f"{pct}% dominado", font=font("small"), text_color=COLORS["text_sec"]).pack(pady=(0, 10))
         if critico:
             ctk.CTkLabel(card, text="¡EXAMEN INMINENTE!", text_color=COLORS["red"], font=ctk.CTkFont(weight="bold")).pack(pady=(0, 8))
 
     def _mision_card(self, t: dict):
         card = ctk.CTkFrame(
             self.misiones_box, fg_color=COLORS["surface_elevated"],
-            corner_radius=10, border_width=0,
+            corner_radius=8, border_width=1, border_color=COLORS["border"], height=44,
         )
-        card.pack(fill="x", pady=4)
-        stripe = ctk.CTkFrame(card, width=4, fg_color=safe_color(t.get("curso_color"), COLORS["accent"]))
+        card.pack(fill="x", pady=2)
+        card.pack_propagate(False)
+        stripe = ctk.CTkFrame(card, width=3, fg_color=safe_color(t.get("curso_color"), COLORS["accent"]))
         stripe.pack(side="left", fill="y")
         body = ctk.CTkFrame(card, fg_color="transparent")
-        body.pack(side="left", fill="x", expand=True, padx=8, pady=8)
-        ctk.CTkLabel(body, text=t["titulo"], font=ctk.CTkFont(weight="bold"), anchor="w").pack(anchor="w")
+        body.pack(side="left", fill="both", expand=True, padx=6, pady=4)
+        ctk.CTkLabel(
+            body, text=t["titulo"], font=font("badge"), anchor="w",
+        ).pack(anchor="w")
         meta = PRIORIDAD_LABELS.get(t.get("prioridad", "normal"), "🟢 NORMAL")
         hora = f" | {t['hora_limite'][:5]}" if t.get("hora_limite") else ""
-        ctk.CTkLabel(body, text=f"{meta}{hora}", text_color=COLORS["text_sec"], font=ctk.CTkFont(size=11)).pack(anchor="w")
+        ctk.CTkLabel(
+            body, text=f"{meta}{hora}", text_color=COLORS["text_sec"], font=font("small"),
+        ).pack(anchor="w")
         ctk.CTkButton(
-            card, text="✓", width=36, fg_color=COLORS["green"],
+            card, text="✓", width=30, height=28, fg_color=COLORS["green"],
             command=lambda tid=t["id"]: self._completar(tid),
-        ).pack(side="right", padx=8)
+        ).pack(side="right", padx=6, pady=6)
 
     def _completar(self, tid: int):
         db.completar_tarea(tid)
@@ -225,19 +250,43 @@ class DashboardFrame(ctk.CTkFrame):
 
     def _plan_ia(self):
         self.ai.set_api_key(db.get_ai_api_key())
-        try:
-            ctx = db.get_contexto_ia()
-            plan = self.ai.generar_plan_dia(ctx["tareas_pendientes"], ctx["bloques_hoy"], ctx["examenes"])
-            self._plan_bloques = self.ai.generar_plan_dia_bloques(ctx)
+        self.ia_text.configure(state="normal")
+        self.ia_text.delete("1.0", "end")
+        self.ia_text.insert("1.0", "⏳ Generando plan… (puede tardar unos segundos)")
+        self.ia_text.configure(state="disabled")
+
+        ctx = db.get_contexto_ia()
+
+        def work():
+            return self.ai.generar_plan_dia_completo(
+                ctx["tareas_pendientes"], ctx["bloques_hoy"], ctx["examenes"],
+                horas_disponibles=ctx.get("horas_disponibles", 4),
+            )
+
+        def on_ok(result):
+            plan, bloques = result
+            self._plan_bloques = bloques
             self.ia_text.configure(state="normal")
             self.ia_text.delete("1.0", "end")
             self.ia_text.insert("1.0", plan)
             self.ia_text.configure(state="disabled")
-        except Exception as e:
+
+        def on_err(err: Exception):
             self.ia_text.configure(state="normal")
             self.ia_text.delete("1.0", "end")
-            self.ia_text.insert("1.0", f"⚠️ {e}")
+            self.ia_text.insert("1.0", f"⚠️ {err}")
             self.ia_text.configure(state="disabled")
+
+        if not self.ai.api_key:
+            on_err(RuntimeError("Configura tu API Key de DeepSeek en ⚙️ Configuración"))
+            return
+
+        self.ai.run_async(
+            self,
+            work,
+            on_ok,
+            on_err,
+        )
 
     def _aplicar(self):
         if not self._plan_bloques:

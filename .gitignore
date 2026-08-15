@@ -1,0 +1,16 @@
+dist/
+academic_os/build/
+__pycache__/
+*.pyc
+academic_os/academic_os.db
+
+# Dependencias — nunca al repo
+node_modules/
+
+# Secretos: la API key de DeepSeek vive en academic-os/.env.local
+.env
+.env.*
+!.env.example
+
+# Build local
+build_out.txt
