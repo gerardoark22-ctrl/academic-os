@@ -1,7 +1,9 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { VitePWA } from 'vite-plugin-pwa';
 
+// Sin vite-plugin-pwa a propósito: el service worker está escrito a mano en
+// public/sw.js y se registra desde main.tsx. Menos magia, y el listener `push`
+// de FCM se controla entero desde ese archivo.
 export default defineConfig({
   build: {
     rollupOptions: {
@@ -15,34 +17,6 @@ export default defineConfig({
       },
     },
   },
-  plugins: [
-    react(),
-    VitePWA({
-      registerType: 'autoUpdate',
-      includeAssets: ['icons/*.png'],
-      manifest: false,
-      workbox: {
-        globPatterns: ['**/*.{html,js,css,png,svg,json,woff2}'],
-        // El service worker no debe responder por la API: el sync necesita
-        // datos frescos, no una copia cacheada.
-        navigateFallbackDenylist: [/^\/api\//],
-        runtimeCaching: [
-          {
-            urlPattern: /^https:\/\/fonts\.googleapis\.com/,
-            handler: 'StaleWhileRevalidate',
-            options: { cacheName: 'google-fonts-stylesheets' },
-          },
-          {
-            urlPattern: /^https:\/\/fonts\.gstatic\.com/,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'google-fonts-webfonts',
-              expiration: { maxEntries: 30, maxAgeSeconds: 60 * 60 * 24 * 365 },
-            },
-          },
-        ],
-      },
-    }),
-  ],
+  plugins: [react()],
   server: { port: 5173, host: true },
 });

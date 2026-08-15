@@ -8,30 +8,26 @@ import {
   createNotification,
 } from '../utils/notifications';
 import { godAnger } from '../utils/gamification';
-import { App } from '@capacitor/app';
-import { LocalNotifications } from '@capacitor/local-notifications';
-import { useTimeStore } from '../stores/timeStore';
-import {
-  ensureNotifPermission,
-  isNative,
-  rescheduleAll,
-} from '../utils/localNotifications';
+import { syncSnapshot } from '../utils/push';
 import { runPenaltyCycle } from '../utils/penaltyCycle';
 
 const CHECK_INTERVAL_MS = 5 * 60_000;
 const STARTUP_DELAY_MS = 2500;
 
 /**
- * Avisos in-app + notificaciones LOCALES de Android.
+ * Avisos in-app + subida del snapshot del día a Supabase.
  *
- * Con la app cerrada avisa Android, no un servidor: las alarmas se reprograman
- * con datos frescos de Dexie cada vez que la app pasa a primer plano.
+ * Con la app cerrada avisa el servidor (netlify/functions/despachar.js), no el
+ * navegador. Pero la fuente de verdad (Dexie) vive aquí, así que hay que
+ * subirle al servidor lo que hay: al arrancar, cada 5 min, y sobre todo al
+ * ocultarse la pestaña — justo cuando el servidor pasa a ser el único que puede
+ * avisar.
  */
 export function useNotifications(): void {
   useEffect(() => {
     const runFullChecks = async () => {
       await runPenaltyCycle();
-      void rescheduleAll();
+      void syncSnapshot();
 
       const player = usePlayerStore.getState().player;
       if (!player) return;
@@ -77,9 +73,7 @@ export function useNotifications(): void {
     };
 
     const onVisible = () => {
-      // Al ocultarse conviene reprogramar: es justo el momento en que Android
-      // pasa a ser el único que puede avisar.
-      void rescheduleAll();
+      void syncSnapshot();
       if (document.visibilityState === 'visible') void runFullChecks();
     };
     const onOnline = () => void runFullChecks();
@@ -89,30 +83,11 @@ export function useNotifications(): void {
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('online', onOnline);
 
-    // Android: permiso + reprogramación al volver a primer plano, y el [Sí] de
-    // la notificación de fin de bloque marca el bloque como completado.
-    const nativo = isNative
-      ? Promise.all([
-          ensureNotifPermission().then(() => rescheduleAll()),
-          App.addListener('appStateChange', ({ isActive }) => {
-            void rescheduleAll();
-            if (isActive) void runFullChecks();
-          }),
-          LocalNotifications.addListener('localNotificationActionPerformed', (e) => {
-            const blockId = e.notification.extra?.blockId as string | undefined;
-            if (blockId && e.actionId === 'done') {
-              void useTimeStore.getState().completeBlock(blockId).then(() => rescheduleAll());
-            }
-          }),
-        ])
-      : null;
-
     return () => {
       window.clearTimeout(startup);
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', onOnline);
-      void nativo?.then(([, ...handles]) => handles.forEach((h) => void h.remove()));
     };
   }, []);
 }

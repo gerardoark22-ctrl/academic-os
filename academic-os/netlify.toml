@@ -1,0 +1,22 @@
+# El repo tiene la app en la raíz de este directorio (academic-os).
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# Corre cada 5 minutos (en UTC). No se puede usar un cron fijo por hora porque
+# el briefing y el cierre son configurables por el usuario: la función se
+# despierta seguido y ella decide, según la hora de Lima, si toca enviar algo.
+# 288 corridas/día, muy dentro del free tier de Netlify (125k/mes).
+[functions."despachar"]
+  schedule = "*/5 * * * *"
+
+# El service worker nunca debe quedar cacheado: si el navegador sirve un sw.js
+# viejo, los cambios de push no llegan nunca.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"

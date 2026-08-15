@@ -14,7 +14,7 @@ import { getTopicBacklogs } from './hadesRules';
 import { todayISO, underworldDays } from './gamification';
 import { getDailyGoalMinutes } from './dailyGoal';
 import { getLocalParts, minutesFromHHMM } from './localTime';
-import { getNotifTimes } from './localNotifications';
+import { getNotifTimes } from './notifTimes';
 
 export async function runPenaltyCycle(): Promise<void> {
   const store = usePlayerStore.getState();

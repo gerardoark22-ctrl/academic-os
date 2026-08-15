@@ -8,7 +8,9 @@ Progressive Web App de gestión académica gamificada para estudiantes de medici
 - **TailwindCSS** + Framer Motion
 - **Zustand** (estado global)
 - **Dexie/IndexedDB** (persistencia offline)
-- **Vite** + vite-plugin-pwa (Workbox)
+- **Vite** + service worker propio (`public/sw.js`, sin vite-plugin-pwa)
+- **Netlify Functions + Firebase Cloud Messaging** para las notificaciones push
+  (ver [DESPLIEGUE.md](DESPLIEGUE.md))
 
 ## Inicio rápido
 

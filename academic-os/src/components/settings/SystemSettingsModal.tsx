@@ -18,12 +18,10 @@ import {
 import {
   DEFAULT_MORNING_TIME,
   DEFAULT_NIGHT_TIME,
-  ensureNotifPermission,
   getNotifTimes,
-  isNative,
-  sendTestNotification,
   setNotifTimes,
-} from '../../utils/localNotifications';
+} from '../../utils/notifTimes';
+import { diagnose, enablePush, pushConfigured, syncSnapshot } from '../../utils/push';
 
 interface Props {
   open: boolean;
@@ -94,6 +92,9 @@ export function SystemSettingsModal({ open, onClose }: Props) {
         await setShowAnimations(animations);
       }
       await setNotifTimes({ morning, night });
+      // El servidor lee las horas del snapshot, así que hay que subirlo ya
+      // mismo: si no, el cambio recién aplicaría en el siguiente ciclo.
+      void syncSnapshot();
 
       onClose();
     } catch (e) {
@@ -218,12 +219,12 @@ export function SystemSettingsModal({ open, onClose }: Props) {
         <details className="group border-t border-marble-crack/40 pt-3">
           <summary className="title-carved flex cursor-pointer list-none items-center gap-2 text-sm marker:content-none [&::-webkit-details-marker]:hidden">
             <span className="inline-block transition-transform group-open:rotate-90">▸</span>
-            🔔 Notificaciones locales
+            🔔 Notificaciones push
           </summary>
           <div className="mt-3 pl-5">
           <p className="body-parchment mb-3 text-xs text-readable-dim">
-            Las programa <strong>Android</strong> en el celular: llegan con la app cerrada y sin
-            internet. Además del briefing y el cierre, avisa al empezar y terminar cada bloque, por
+            Llegan por <strong>Firebase</strong> aunque tengas la app cerrada (el mismo canal que
+            WhatsApp). Además del briefing y el cierre, avisa al empezar y terminar cada bloque, por
             misiones vencidas y por examen a menos de 7 días.
           </p>
           <div className="flex flex-wrap items-center gap-3">
@@ -250,9 +251,9 @@ export function SystemSettingsModal({ open, onClose }: Props) {
             Hora de Perú. Por defecto {DEFAULT_MORNING_TIME} y {DEFAULT_NIGHT_TIME}.
           </p>
 
-          {!isNative && (
+          {!pushConfigured() && (
             <p className="flavor-brutal mt-3 text-xs text-danger">
-              Estás en el navegador: las notificaciones locales solo corren dentro del APK de Android.
+              Faltan las variables de entorno de Firebase/Supabase en Netlify (ver DESPLIEGUE.md).
             </p>
           )}
 
@@ -261,36 +262,26 @@ export function SystemSettingsModal({ open, onClose }: Props) {
               variant="ghost"
               size="sm"
               onClick={() => {
-                void sendTestNotification().then((ok) =>
-                  setPushMsg(
-                    ok
-                      ? '📨 Aviso de prueba en 5 segundos'
-                      : '❌ Sin permiso de notificaciones (revisa los ajustes de la app)',
-                  ),
+                void enablePush().then((r) =>
+                  setPushMsg(r.ok ? '✅ Push activado en este dispositivo' : `❌ ${r.error}`),
                 );
               }}
             >
-              Enviar notificación de prueba
+              Activar push
             </EpicButton>
             <EpicButton
               variant="ghost"
               size="sm"
               onClick={() => {
-                void ensureNotifPermission().then((r) =>
-                  setPushMsg(
-                    r === 'ok'
-                      ? '✅ Permiso concedido'
-                      : r === 'denied'
-                        ? '❌ Permiso denegado — actívalo en Ajustes de Android'
-                        : '⚠️ Solo disponible en la app de Android',
-                  ),
-                );
+                void diagnose().then(setPushMsg).catch((e) => setPushMsg(`💥 ${String(e)}`));
               }}
             >
-              Pedir permiso
+              Diagnóstico
             </EpicButton>
           </div>
-          {pushMsg && <p className="body-parchment mt-2 text-xs text-highlight">{pushMsg}</p>}
+          {pushMsg && (
+            <p className="body-parchment mt-2 whitespace-pre-line text-xs text-highlight">{pushMsg}</p>
+          )}
           </div>
         </details>
 
