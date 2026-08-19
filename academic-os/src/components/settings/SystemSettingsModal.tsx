@@ -18,8 +18,13 @@ import {
 import {
   DEFAULT_MORNING_TIME,
   DEFAULT_NIGHT_TIME,
+  DEFAULT_NOTIF_ENABLED,
   getNotifTimes,
   setNotifTimes,
+  getNotifEnabled,
+  setNotifEnabled,
+  type NotifEnabled,
+  type NotifTipo,
 } from '../../utils/notifTimes';
 import { diagnose, enablePush, pushConfigured, syncSnapshot } from '../../utils/push';
 
@@ -47,6 +52,7 @@ export function SystemSettingsModal({ open, onClose }: Props) {
   const [resetting, setResetting] = useState(false);
   const [morning, setMorning] = useState(DEFAULT_MORNING_TIME);
   const [night, setNight] = useState(DEFAULT_NIGHT_TIME);
+  const [enabled, setEnabled] = useState<NotifEnabled>(DEFAULT_NOTIF_ENABLED);
   const [pushMsg, setPushMsg] = useState<string | null>(null);
 
   useEffect(() => {
@@ -55,6 +61,7 @@ export function SystemSettingsModal({ open, onClose }: Props) {
       setMorning(t.morning);
       setNight(t.night);
     });
+    void getNotifEnabled().then(setEnabled);
   }, [open]);
 
   useEffect(() => {
@@ -92,9 +99,11 @@ export function SystemSettingsModal({ open, onClose }: Props) {
         await setShowAnimations(animations);
       }
       await setNotifTimes({ morning, night });
-      // El servidor lee las horas del snapshot, así que hay que subirlo ya
-      // mismo: si no, el cambio recién aplicaría en el siguiente ciclo.
-      void syncSnapshot();
+      await setNotifEnabled(enabled);
+      // El servidor lee las horas del snapshot: hay que ESPERAR a que suba
+      // antes de cerrar, si no el modal se cierra y el usuario suelta el
+      // celular antes de que el fetch termine (se corta a medias, sin subir).
+      await syncSnapshot();
 
       onClose();
     } catch (e) {
@@ -250,6 +259,38 @@ export function SystemSettingsModal({ open, onClose }: Props) {
           <p className="body-parchment mt-2 text-[10px] text-readable-dim">
             Hora de Perú. Por defecto {DEFAULT_MORNING_TIME} y {DEFAULT_NIGHT_TIME}.
           </p>
+
+          <p className="body-parchment mb-2 mt-4 text-xs text-readable-dim">
+            Tipos de aviso — apaga los que no quieras recibir:
+          </p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {(
+              [
+                ['briefing', '☀️ Briefing matutino'],
+                ['cierre', '🌙 Cierre nocturno'],
+                ['bloques', '▶️ Inicio/fin de bloque'],
+                ['tareas', '🚨 Tareas por vencer / vencidas'],
+                ['examen', '🎯 Examen a -7 días'],
+              ] as [NotifTipo, string][]
+            ).map(([tipo, label]) => (
+              <label key={tipo} className="flex cursor-pointer items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={enabled[tipo]}
+                  onChange={(e) => setEnabled((prev) => ({ ...prev, [tipo]: e.target.checked }))}
+                  className="h-4 w-4 accent-bronze"
+                />
+                <span className="body-parchment">{label}</span>
+              </label>
+            ))}
+          </div>
+          {enabled.tareas && (
+            <p className="body-parchment mt-2 text-[10px] text-readable-dim">
+              "Tareas por vencer/vencidas" escala solo: empieza 2 días antes de vencer (1 aviso/día),
+              sube a 2-3 avisos/día cerca de la fecha, y el tono se pone más urgente mientras más
+              vencida esté (tope 3 avisos/día).
+            </p>
+          )}
 
           {!pushConfigured() && (
             <p className="flavor-brutal mt-3 text-xs text-danger">

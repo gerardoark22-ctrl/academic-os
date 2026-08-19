@@ -8,7 +8,7 @@
  */
 
 const assert = require('node:assert');
-const { limaNow, limaToMs, planDay, duePushes, GRACIA_MIN } = require('../netlify/functions/lib/plan');
+const { limaNow, limaToMs, planDay, duePushes, tierDe, GRACIA_MIN } = require('../netlify/functions/lib/plan');
 
 // ── Lima <-> UTC ────────────────────────────────────────────────────────────
 
@@ -30,7 +30,7 @@ assert.strictEqual(limaToMs('2026-08-15', '07:00'), Date.parse('2026-08-15T12:00
 const ms = limaToMs('2026-08-15', '22:00');
 assert.deepStrictEqual([limaNow(ms).fecha, limaNow(ms).hhmm], ['2026-08-15', '22:00']);
 
-// ── Los 6 disparadores ──────────────────────────────────────────────────────
+// ── Disparadores de un día ───────────────────────────────────────────────────
 
 const day = {
   date: '2026-08-15',
@@ -38,22 +38,52 @@ const day = {
     { id: 'b1', title: 'Neuro', startTime: '08:00', endTime: '08:30', completed: false },
     { id: 'b2', title: 'Hecho', startTime: '10:00', endTime: '10:30', completed: true },
   ],
-  dueToday: ['Leer cap 3'],
-  overdue: [{ title: 'Seminario', daysOverdue: 4 }],
+  dueToday: ['Leer cap 3'], // diasHasta 0 -> tier 'hoy' (3 avisos)
+  overdue: [{ title: 'Seminario', daysOverdue: 4 }], // diasHasta -4 -> tier 'venc-media' (2 avisos)
+  upcoming: [{ title: 'Informe', daysUntil: 2 }], // tier 'antes2' (1 aviso)
   exam: { name: 'Neuro — U2', daysLeft: 3 },
   goalMinutes: 180,
 };
 const times = { morning: '07:00', night: '22:00' };
 
 const plan = planDay(day, times);
-assert.deepStrictEqual(
-  plan.map((e) => e.hhmm),
-  ['07:00', '08:00', '08:30', '09:00', '13:00', '22:00'],
-  JSON.stringify(plan.map((e) => [e.hhmm, e.title])),
-);
 assert.ok(!plan.some((e) => e.title.includes('Hecho')), 'un bloque completado no genera avisos');
 assert.strictEqual(new Set(plan.map((e) => e.clave)).size, plan.length, 'las claves son únicas');
 assert.ok(plan.every((e) => e.clave.startsWith('2026-08-15:')), 'toda clave lleva la fecha');
+// briefing + cierre + 2 bloque + 1 antes2 + 3 hoy + 2 venc-media + 1 examen = 11
+assert.strictEqual(plan.length, 11, JSON.stringify(plan.map((e) => [e.hhmm, e.title])));
+
+// ── Escalado por tier ────────────────────────────────────────────────────────
+
+assert.strictEqual(tierDe(2), 'antes2');
+assert.strictEqual(tierDe(1), 'antes1');
+assert.strictEqual(tierDe(0), 'hoy');
+assert.strictEqual(tierDe(-1), 'venc-leve');
+assert.strictEqual(tierDe(-4), 'venc-media');
+assert.strictEqual(tierDe(-7), 'venc-alta');
+assert.strictEqual(tierDe(3), null, 'a más de 2 días de vencer todavía no avisa');
+
+const clavesTareas = (d) =>
+  planDay(d, times)
+    .filter((e) => e.clave.includes(':tareas:'))
+    .map((e) => e.hhmm);
+assert.deepStrictEqual(clavesTareas({ ...day, dueToday: [], overdue: [], upcoming: [{ title: 'X', daysUntil: 1 }] }), ['09:00', '19:00']);
+assert.deepStrictEqual(clavesTareas({ ...day, dueToday: [], overdue: [{ title: 'X', daysOverdue: 10 }], upcoming: [] }), ['09:00', '13:00', '19:00']);
+
+// ── Toggle por tipo: apagar 'tareas' quita todo ese bloque, nada más ───────
+
+const sinTareas = planDay(day, times, { tareas: false });
+assert.ok(!sinTareas.some((e) => e.clave.includes(':tareas:')), 'tareas apagado no debe mandar nada de tareas');
+assert.strictEqual(sinTareas.length, plan.length - 6, 'el resto de disparadores sigue igual');
+
+const soloBriefing = planDay(day, times, {
+  briefing: true,
+  cierre: false,
+  bloques: false,
+  tareas: false,
+  examen: false,
+});
+assert.deepStrictEqual(soloBriefing.map((e) => e.clave), ['2026-08-15:briefing']);
 
 // ── Ventana + antideduplicado ───────────────────────────────────────────────
 
@@ -84,15 +114,14 @@ for (let min = 0; min <= 30; min += 5) {
 }
 assert.strictEqual(envios, 1, 'el briefing se envía una sola vez pese a 7 corridas del cron');
 
-// Un día completo: ~6 avisos, cada uno una sola vez.
+// Un día completo con escalado de tareas: cada aviso sale una sola vez.
 const delDia = new Set();
 for (let min = 0; min < 24 * 60; min += 5) {
   for (const ev of duePushes(dias, times, en('00:00', min))) delDia.add(ev.clave);
 }
 assert.strictEqual(delDia.size, plan.length, `se esperaban ${plan.length} avisos únicos en el día`);
-assert.ok(delDia.size >= 5 && delDia.size <= 8, 'objetivo de 5-8 avisos al día');
 
 // Cambiar la hora del briefing mueve el disparo (es configurable, por eso el cron cada 5 min).
 assert.strictEqual(duePushes(dias, { morning: '05:30', night: '22:00' }, en('05:30')).length, 1);
 
-console.log('ok — Lima/UTC, los 6 disparadores y el antideduplicado');
+console.log('ok — Lima/UTC, disparadores + escalado por tier, toggles y antideduplicado');

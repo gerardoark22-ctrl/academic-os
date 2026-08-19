@@ -30,3 +30,29 @@ export async function getNotifTimes(): Promise<NotifTimes> {
 export async function setNotifTimes(times: NotifTimes): Promise<void> {
   await db.settings.put({ key: TIMES_KEY, value: times });
 }
+
+// ── Tipos de notificación: prender/apagar por separado ──────────────────────
+
+const ENABLED_KEY = 'notifEnabled';
+
+export type NotifTipo = 'briefing' | 'cierre' | 'bloques' | 'tareas' | 'examen';
+
+export type NotifEnabled = Record<NotifTipo, boolean>;
+
+export const DEFAULT_NOTIF_ENABLED: NotifEnabled = {
+  briefing: true,
+  cierre: true,
+  bloques: true,
+  tareas: true,
+  examen: true,
+};
+
+export async function getNotifEnabled(): Promise<NotifEnabled> {
+  const row = await db.settings.get(ENABLED_KEY);
+  const value = row?.value as Partial<NotifEnabled> | undefined;
+  return { ...DEFAULT_NOTIF_ENABLED, ...value };
+}
+
+export async function setNotifEnabled(enabled: NotifEnabled): Promise<void> {
+  await db.settings.put({ key: ENABLED_KEY, value: enabled });
+}

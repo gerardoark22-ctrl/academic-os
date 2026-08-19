@@ -10,6 +10,13 @@
 -- policy a propósito: solo la toca la función de Netlify con la llave
 -- service_role, que se salta RLS.
 
+-- Si ya tenías las tablas creadas (push funcionando) y solo quieres el panel
+-- de notificaciones nuevo, NO corras todo este archivo: perderías el token de
+-- push guardado y tendrías que reactivar el push. Corre solo esto:
+--   alter table aos_snapshot add column if not exists enabled jsonb not null
+--     default '{"briefing":true,"cierre":true,"bloques":true,"tareas":true,"examen":true}'::jsonb;
+-- El resto de este archivo es para una instalación desde cero.
+
 drop table if exists aos_snapshot, aos_push_subs, aos_sent cascade;
 
 -- Lo que el navegador sube: qué hay hoy y mañana en Dexie, más las horas
@@ -19,6 +26,8 @@ create table aos_snapshot (
   fecha      date not null,
   morning    text not null default '07:00',
   night      text not null default '22:00',
+  -- Qué tipos de notificación están prendidos (panel de configuración).
+  enabled    jsonb not null default '{"briefing":true,"cierre":true,"bloques":true,"tareas":true,"examen":true}'::jsonb,
   days       jsonb not null default '[]'::jsonb,
   updated_at timestamptz not null default now()
 );

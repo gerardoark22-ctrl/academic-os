@@ -17,7 +17,7 @@
  */
 
 import { db } from './db';
-import { getNotifTimes, type NotifTimes } from './notifTimes';
+import { getNotifTimes, getNotifEnabled, type NotifTimes } from './notifTimes';
 import { todayLocalISO, addDaysLocalISO, daysBetweenLocalISO } from './localTime';
 import { getDailyGoalMinutes } from './dailyGoal';
 import type { Course, Mission, Player, TimeBlock } from '../types';
@@ -65,6 +65,8 @@ export interface DayData {
   blocks: { id: string; title: string; startTime: string; endTime: string; completed: boolean }[];
   dueToday: string[];
   overdue: { title: string; daysOverdue: number }[];
+  /** Vencen en 1-2 días: alimenta el escalado de avisos antes de que se venzan. */
+  upcoming: { title: string; daysUntil: number }[];
   exam: { name: string; daysLeft: number } | null;
   goalMinutes: number;
 }
@@ -98,6 +100,9 @@ async function readDay(date: string, goalMinutes: number): Promise<DayData> {
       .filter((m) => m.dueDate < date)
       .map((m) => ({ title: m.title, daysOverdue: daysBetweenLocalISO(m.dueDate, date) }))
       .sort((a, b) => b.daysOverdue - a.daysOverdue),
+    upcoming: activas
+      .filter((m) => m.dueDate > date && daysBetweenLocalISO(date, m.dueDate) <= 2)
+      .map((m) => ({ title: m.title, daysUntil: daysBetweenLocalISO(date, m.dueDate) })),
     exam: soonest
       ? {
           name: `${soonest.course.name} — ${soonest.unit.name}`,
@@ -117,6 +122,7 @@ export async function syncSnapshot(): Promise<boolean> {
   if (!SUPABASE_ANON_KEY) return false;
   try {
     const times: NotifTimes = await getNotifTimes();
+    const enabled = await getNotifEnabled();
     const goal = getDailyGoalMinutes((await db.player.get('gerardex')) as Player | undefined);
     const today = todayLocalISO();
     const days = [await readDay(today, goal), await readDay(addDaysLocalISO(today, 1), goal)];
@@ -128,6 +134,7 @@ export async function syncSnapshot(): Promise<boolean> {
         fecha: today,
         morning: times.morning,
         night: times.night,
+        enabled,
         days,
         updated_at: new Date().toISOString(),
       },

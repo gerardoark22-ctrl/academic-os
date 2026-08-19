@@ -34,7 +34,12 @@ exports.handler = async () => {
     const [snap] = await sup('GET', `aos_snapshot?user_id=eq.${USER_ID}&select=*`);
     if (!snap) return ok('sin snapshot: la app todavía no subió datos');
 
-    const eventos = duePushes(snap.days, { morning: snap.morning, night: snap.night }, Date.now());
+    const eventos = duePushes(
+      snap.days,
+      { morning: snap.morning, night: snap.night },
+      Date.now(),
+      { enabled: snap.enabled },
+    );
     if (!eventos.length) return ok('nada que enviar en esta ventana');
 
     const tokens = await sup('GET', 'aos_push_subs?select=token');
